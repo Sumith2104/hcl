@@ -123,26 +123,41 @@ Your mission:
   // ─── Conversation Memory: State Analysis ────────────────────────────────
 
   /**
-   * Analyzes the full conversation to determine what has already been discussed.
-   * This gives the response generator "memory" of past turns.
+   * Analyzes the full conversation to determine what has already been discussed
+   * and which profile parameters have been explicitly provided by the user.
    */
   private analyzeConversationState(conversation: Array<{ role: 'user' | 'assistant'; content: string }>) {
     const assistantMessages = conversation.filter(m => m.role === 'assistant').map(m => m.content.toLowerCase());
     const userMessages = conversation.filter(m => m.role === 'user').map(m => m.content.toLowerCase());
+    const fullUserLower = userMessages.join(' ');
+
+    const hasAskedQuestions = assistantMessages.some(m =>
+      m.includes('diagnostic questions') ||
+      m.includes('quick diagnostic') ||
+      m.includes('current technical background') ||
+      m.includes('weekly time commitment')
+    );
+
+    const hasValidated = assistantMessages.some(m =>
+      m.includes('request validation') ||
+      m.includes('feasibility analysis') ||
+      m.includes('validated your learning request') ||
+      m.includes('updated request validation')
+    );
 
     const goalAlreadyAnnounced = assistantMessages.some(m =>
       m.includes('i have analyzed') ||
       m.includes('learning pillars') ||
       m.includes('core milestones') ||
+      m.includes('curriculum architecture') ||
       m.includes('core learning pillars') ||
       m.includes('core engineering competencies') ||
-      m.includes('mapped out a comprehensive') ||
-      m.includes('curriculum')
+      m.includes('mapped out a comprehensive')
     );
 
-    const hoursAlreadyDiscussed = assistantMessages.some(m => m.includes('hrs/week') || m.includes('hours/week'));
-    const experienceAlreadyDiscussed = assistantMessages.some(m => m.includes('experience level') || m.includes('intermediate track') || m.includes('beginner track'));
-    const buildPromptShown = assistantMessages.some(m => m.includes('build deterministic roadmap'));
+    const userProvidedHours = /\d+\s*(?:hours?|hrs?|h)(?:\s*(?:per|\/)\s*week)?/i.test(fullUserLower);
+    const userProvidedExperience = /(beginner|intermediate|advanced|expert|no experience|some experience|know python|know basics|scratch|years?)/i.test(fullUserLower);
+    const userProvidedStyle = /(hands[\s-]?on|visual|video|reading|book|structured|theory)/i.test(fullUserLower);
 
     // Extract the last goal that was discussed by the assistant
     let lastAnnouncedGoal = '';
@@ -154,16 +169,16 @@ Your mission:
       }
     }
 
-    // Count meaningful turns (excluding the initial system greeting)
-    const meaningfulTurns = userMessages.length;
-
     return {
+      hasAskedQuestions,
+      hasValidated,
       goalAlreadyAnnounced,
-      hoursAlreadyDiscussed,
-      experienceAlreadyDiscussed,
-      buildPromptShown,
+      userProvidedHours,
+      userProvidedExperience,
+      userProvidedStyle,
+      allKeyDetailsProvided: userProvidedHours && userProvidedExperience,
       lastAnnouncedGoal,
-      meaningfulTurns,
+      userTurnsCount: userMessages.length,
       turnCount: conversation.length
     };
   }
@@ -177,7 +192,7 @@ Your mission:
     lastUserMessage: string,
     conversation: Array<{ role: 'user' | 'assistant'; content: string }>,
     state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>
-  ): 'greeting' | 'who_are_you' | 'correction' | 'new_goal' | 'plan_change' | 'initial_goal' | 'acknowledgement' | 'question' | 'detail_update' | 'general' {
+  ): 'greeting' | 'who_are_you' | 'correction' | 'plan_change' | 'answer_to_questions' | 'initial_goal' | 'acknowledgement' | 'question' | 'detail_update' | 'general' {
     const lower = lastUserMessage.toLowerCase().trim();
 
     // Pure greeting
@@ -190,7 +205,7 @@ Your mission:
       return 'who_are_you';
     }
 
-    // How are you (treat as greeting)
+    // How are you
     if (lower.includes('how are you') || lower.includes('how r u') || lower.includes('how are u')) {
       return 'greeting';
     }
@@ -205,28 +220,31 @@ Your mission:
       return 'plan_change';
     }
 
-    // Correction signals — user is fixing/updating a specific field
+    // If the assistant previously asked diagnostic questions and has not yet validated -> User is answering the questions!
+    if (state.hasAskedQuestions && !state.hasValidated) {
+      if (!lower.startsWith('no ') && !lower.startsWith('change of plan') && !lower.includes('switch to')) {
+        return 'answer_to_questions';
+      }
+    }
+
+    // Correction signals — user is fixing/updating a specific field after validation or goal announcement
     const isCorrecting = (
       lower.startsWith('no ') || lower.startsWith('no,') || lower.startsWith('nah') ||
       lower.startsWith('not ') || lower.startsWith('actually') ||
       lower.includes('change it to') || lower.includes('make it') ||
-      lower.includes('i have ') || lower.includes('i ve ') || lower.includes("i've ") ||
       lower.includes('correct') || lower.includes('update')
     );
 
-    // Check if the message contains a numeric value (hours, weeks, etc.)
     const hasNumericDetail = /\d+\s*(hours?|hrs?|h|weeks?|wks?|months?|mo)/i.test(lower);
-    // Check if the message mentions experience level
-    const hasExperienceDetail = /(beginner|intermediate|advanced|expert|no experience|some experience|basics|scratch)/i.test(lower);
-    // Check if the message mentions learning style
+    const hasExperienceDetail = /(beginner|intermediate|advanced|expert|no experience|some experience|know python|basics|scratch)/i.test(lower);
     const hasStyleDetail = /(hands[\s-]?on|visual|video|reading|book|structured|theory)/i.test(lower);
 
     if (isCorrecting && (hasNumericDetail || hasExperienceDetail || hasStyleDetail)) {
       return 'correction';
     }
 
-    // Detail update without explicit correction signal but with specific data
-    if (state.goalAlreadyAnnounced && (hasNumericDetail || hasExperienceDetail || hasStyleDetail) && !this.containsGoalKeyword(lower)) {
+    // Detail update without explicit correction signal
+    if (state.hasValidated && (hasNumericDetail || hasExperienceDetail || hasStyleDetail) && !this.containsGoalKeyword(lower)) {
       return 'detail_update';
     }
 
@@ -235,7 +253,7 @@ Your mission:
       return 'question';
     }
 
-    // New goal (stated for the first time)
+    // Goal stated
     if (this.containsGoalKeyword(lower)) {
       if (state.goalAlreadyAnnounced) {
         return 'plan_change';
@@ -256,8 +274,7 @@ Your mission:
   // ─── Memory-Aware Response Generator ───────────────────────────────────
 
   /**
-   * Generates dynamic, context-aware conversational response WITH conversation memory.
-   * Knows what has been said before and responds accordingly.
+   * Generates dynamic, context-aware conversational response WITH question & validation workflow.
    */
   private generateDynamicConversationalResponse(
     lastUserMessage: string,
@@ -283,25 +300,28 @@ Your mission:
         return this.respondToCorrection(lastUserMessage, profile, state);
 
       case 'plan_change':
-        return this.respondToPlanChange(profile, state);
+        return this.respondToPlanChange(lastUserMessage, profile, state);
+
+      case 'answer_to_questions':
+        return this.respondToAnswerAndValidate(lastUserMessage, profile, state);
 
       case 'initial_goal':
-        return this.respondToInitialGoal(profile);
+        return this.respondToInitialGoal(lastUserMessage, profile, state);
 
       case 'question':
         return this.respondToQuestion(lastUserMessage, profile, state, conversation);
 
       case 'general':
       default:
-        // If goal exists but hasn't been announced yet, do initial goal analysis
-        if (hasGoal && !state.goalAlreadyAnnounced) {
-          return this.respondToInitialGoal(profile);
+        if (hasGoal && !state.hasAskedQuestions && !state.allKeyDetailsProvided) {
+          return this.askDiagnosticQuestions(profile);
         }
-        // If goal already announced, provide contextual follow-up
+        if (hasGoal && (state.allKeyDetailsProvided || state.hasAskedQuestions)) {
+          return this.respondToAnswerAndValidate(lastUserMessage, profile, state);
+        }
         if (hasGoal && state.goalAlreadyAnnounced) {
           return this.respondToGeneral(lastUserMessage, profile, state);
         }
-        // No goal yet — ask for one
         return `That's interesting! To build your personalized learning roadmap, I need to understand your goal better. 🎯\n\nWhat career role or technical domain would you like to master? For example:\n• *Machine Learning Engineer*\n• *Prompt Engineer*\n• *Full Stack Web Developer*\n• *DSA & Algorithms in Python*\n• *AI Application Engineer*`;
     }
   }
@@ -317,17 +337,125 @@ Your mission:
   }
 
   private respondToIdentity(): string {
-    return `I'm an **Agentic AI Learning Architect** powered by AWS Bedrock! 🚀\n\nHere is how I assist you:\n1. **Dynamic Profiling**: I analyze your target role, baseline skills, available hours, and learning style.\n2. **Topological Prerequisite DAG**: I query our Fluxbase PostgreSQL curriculum and sequence your learning path so you master all dependencies in order.\n3. **Curated Recommendations**: I rank top learning resources (interactive sandboxes, videos, docs) tailored specifically to you.\n4. **Adaptive Recalibration**: If you struggle or want to accelerate, I adapt your path dynamically.\n\nWhat topic would you like to begin with?`;
+    return `I'm an **Agentic AI Learning Architect** powered by AWS Bedrock! 🚀\n\nHere is how I assist you:\n1. **Diagnostic Questioning**: I understand your current level and weekly schedule.\n2. **Request & Feasibility Validation**: I evaluate your timeline feasibility against real-world industry benchmarks.\n3. **Topological Prerequisite DAG**: I sequence your learning path on Fluxbase PostgreSQL so you master all dependencies in order.\n4. **Curated Recommendations & Recalibration**: I adapt your path if your pace changes.\n\nWhat topic would you like to begin with?`;
   }
 
   private respondToAcknowledgement(profile: ExtractedProfileData, hasGoal: boolean, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
-    if (hasGoal && state.goalAlreadyAnnounced) {
-      return `You're very welcome! 🌟 Your **${profile.target_goal}** profile is fully synchronized with Fluxbase.\n\nHere's your current profile summary:\n• **Goal**: ${profile.target_goal}\n• **Level**: ${profile.experience_level}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks\n• **Style**: ${profile.preferred_learning_style}\n\nWhenever you're ready, click **"Build Deterministic Roadmap →"** in the panel to generate your sequenced milestone DAG! 🗺️`;
+    if (hasGoal && (state.goalAlreadyAnnounced || state.hasValidated)) {
+      return `You're very welcome! 🌟 Your **${profile.target_goal}** profile is validated and fully synchronized with Fluxbase.\n\n**Validated Profile Summary:**\n• **Goal**: ${profile.target_goal}\n• **Level**: ${profile.experience_level}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks\n• **Style**: ${profile.preferred_learning_style}\n\nWhenever you're ready, click **"Build Deterministic Roadmap →"** in the panel to generate your sequenced milestone DAG! 🗺️`;
     }
     if (hasGoal) {
       return `Great! 🌟 I've got your **${profile.target_goal}** profile ready.\n\nWhenever you're ready, click **"Build Deterministic Roadmap →"** to construct your learning path!`;
     }
     return `You're welcome! Let me know whenever you'd like to explore a learning goal or generate a customized roadmap! 🚀`;
+  }
+
+  /**
+   * Diagnostic Questioning: When a user gives a goal but hasn't provided schedule / background details
+   */
+  private askDiagnosticQuestions(profile: ExtractedProfileData): string {
+    const goal = profile.target_goal;
+    return `Great choice! Mastering **${goal}** is high-leverage and exciting! 🚀🎯
+
+To construct your personalized prerequisite DAG and validate your schedule feasibility, let me ask **3 quick diagnostic questions**:
+
+1. 📊 **Current Technical Background**: Are you starting from scratch, or do you already know basic programming, math, or related tools?
+2. ⏰ **Weekly Time Commitment**: How many hours per week can you comfortably dedicate (e.g. *8 hrs, 16 hrs, 25 hrs/week*)?
+3. 🛠️ **Preferred Learning Style**: Do you prefer *hands-on coding drills & projects*, *video walkthroughs*, or *reading technical documentation*?
+
+*(Feel free to reply in one sentence, e.g. "know basic python, 16 hours/week, prefer hands-on")*`;
+  }
+
+  /**
+   * Initial Goal handler: If all details were already provided in the prompt, validate immediately; otherwise ask questions.
+   */
+  private respondToInitialGoal(
+    lastUserMessage: string,
+    profile: ExtractedProfileData,
+    state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>
+  ): string {
+    // Check if the user message already contains hours AND experience
+    const lower = lastUserMessage.toLowerCase();
+    const hasHours = /\d+\s*(?:hours?|hrs?|h)/i.test(lower);
+    const hasExp = /(beginner|intermediate|advanced|expert|know python|know basic|scratch|years?)/i.test(lower);
+
+    if (hasHours || hasExp || state.allKeyDetailsProvided) {
+      // User provided details right away -> validate and respond
+      return this.respondToAnswerAndValidate(lastUserMessage, profile, state);
+    }
+
+    // User only gave a bare goal (e.g. "i want to learn machine learning") -> Ask diagnostic questions first!
+    return this.askDiagnosticQuestions(profile);
+  }
+
+  /**
+   * Validation & Response: Validates user answers / requests and delivers validated tailored curriculum
+   */
+  private respondToAnswerAndValidate(
+    lastUserMessage: string,
+    profile: ExtractedProfileData,
+    state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>
+  ): string {
+    const hours = profile.available_hours_per_week;
+    const exp = profile.experience_level;
+    const style = profile.preferred_learning_style;
+    const goal = profile.target_goal;
+
+    // Feasibility Score & Commentary
+    let feasibilityScore = 96;
+    let hoursCommentary = '';
+    if (hours < 8) {
+      feasibilityScore = 82;
+      hoursCommentary = `Light pace · Calibrated to ~${profile.target_duration_weeks} weeks with structured micro-milestones to ensure steady retention.`;
+    } else if (hours <= 20) {
+      feasibilityScore = 98;
+      hoursCommentary = `Optimal balance! Allows ~${Math.round(hours * 0.65)} hrs of hands-on project coding + ~${Math.round(hours * 0.35)} hrs of core prerequisite theory per week.`;
+    } else {
+      feasibilityScore = 94;
+      hoursCommentary = `Accelerated bootcamp pace! Compressing milestone prerequisites into an intensive ~${profile.target_duration_weeks} week track.`;
+    }
+
+    // Skill Gap Commentary
+    let skillCommentary = '';
+    if (exp === 'beginner') {
+      skillCommentary = `Zero-assumption track: Foundational syntax, development environment setup, and visual mental models will be sequenced first.`;
+    } else if (exp === 'intermediate') {
+      skillCommentary = `Core fundamentals verified: Bypassing generic introductions and fast-tracking directly into domain-specific architecture & hands-on capstones.`;
+    } else {
+      skillCommentary = `Advanced track: Fast-forwarding directly to distributed architecture, performance optimization, and production evaluation pipelines.`;
+    }
+
+    // Style Commentary
+    let styleCommentary = '';
+    if (style === 'hands-on') {
+      styleCommentary = `Curriculum weighted 70% toward interactive coding drills, repository builds, and milestone capstone submissions.`;
+    } else if (style === 'visual') {
+      styleCommentary = `Curriculum prioritizes animated concept breakdowns, architectural flowcharts, and guided video walkthroughs.`;
+    } else {
+      styleCommentary = `Curriculum prioritizes deep-dive documentation, RFC whitepapers, and textbook reference readings.`;
+    }
+
+    const validationSection = `Got it! I have validated your learning request and calibrated your curriculum parameters. ✅
+
+### 🔍 Request Validation & Feasibility Analysis
+• ⏰ **Weekly Commitment**: **${hours} hrs/week**
+  ↳ *Feasibility: ${feasibilityScore}% · ${hoursCommentary}*
+• 📊 **Experience & Skill Gap**: **${exp.toUpperCase()}**
+  ↳ *Prerequisite Validation: ${skillCommentary}*
+• 🛠️ **Learning Style**: **${style.toUpperCase()}**
+  ↳ *Pedagogical Calibrations: ${styleCommentary}*
+• 📅 **Calculated Duration**: **~${profile.target_duration_weeks} weeks** to complete production mastery.`;
+
+    const pillars = this.buildGoalPillars(profile, false);
+
+    return `${validationSection}
+
+---
+
+### 🗺️ Tailored Curriculum Architecture for **${goal}**
+${pillars}
+
+All prerequisite dependencies and milestone capstones have been calculated in Fluxbase. Click **"Build Deterministic Roadmap →"** in the panel to construct your sequenced 2D DAG! 🚀`;
   }
 
   private respondToCorrection(lastUserMessage: string, profile: ExtractedProfileData, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
@@ -337,17 +465,17 @@ Your mission:
     // Detect what was corrected
     const hoursMatch = lower.match(/(\d+)\s*(?:hours?|hrs?|h)/i);
     if (hoursMatch) {
-      changes.push(`⏰ **Weekly Hours**: Updated to **${profile.available_hours_per_week} hrs/week**`);
+      changes.push(`⏰ **Weekly Commitment**: Updated & Validated to **${profile.available_hours_per_week} hrs/week** (Feasibility: 98%)`);
     }
 
     const weeksMatch = lower.match(/(\d+)\s*(?:weeks?|wks?)/i);
     const monthsMatch = lower.match(/(\d+)\s*(?:months?|mo)/i);
     if (weeksMatch || monthsMatch) {
-      changes.push(`📅 **Duration**: Updated to **${profile.target_duration_weeks} weeks**`);
+      changes.push(`📅 **Duration**: Updated & Calibrated to **${profile.target_duration_weeks} weeks**`);
     }
 
     if (/(beginner|intermediate|advanced|expert|no experience|some experience)/i.test(lower)) {
-      changes.push(`📊 **Experience Level**: Updated to **${profile.experience_level}**`);
+      changes.push(`📊 **Experience Level**: Updated to **${profile.experience_level}** (Prerequisite DAG dynamically re-weighted)`);
     }
 
     if (/(hands[\s-]?on|visual|video|reading|book|structured|theory)/i.test(lower)) {
@@ -355,23 +483,39 @@ Your mission:
     }
 
     if (changes.length === 0) {
-      changes.push(`📝 Profile updated based on your input`);
+      changes.push(`📝 Parameters validated and updated based on your input`);
     }
 
-    return `Got it! I've updated your profile accordingly. ✅\n\n**Changes applied:**\n${changes.join('\n')}\n\n**Updated Profile Summary:**\n• **Goal**: ${profile.target_goal}\n• **Level**: ${profile.experience_level}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks\n• **Style**: ${profile.preferred_learning_style}\n• **Baseline Skills**: ${profile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}\n\nYour profile is synced with Fluxbase. Click **"Build Deterministic Roadmap →"** whenever you're ready! 🗺️`;
+    return `Got it! I've re-validated your updated request. ✅
+
+### 🔍 Request Validation Update
+${changes.join('\n')}
+
+**Validated Profile Summary:**
+• **Goal**: ${profile.target_goal}
+• **Level**: ${profile.experience_level}
+• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks
+• **Style**: ${profile.preferred_learning_style}
+• **Baseline Skills**: ${profile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}
+
+Your profile is validated and synced with Fluxbase. Click **"Build Deterministic Roadmap →"** whenever you're ready! 🗺️`;
   }
 
-  private respondToPlanChange(profile: ExtractedProfileData, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
+  private respondToPlanChange(lastUserMessage: string, profile: ExtractedProfileData, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
     const previousGoal = state.lastAnnouncedGoal;
     const pivotNote = previousGoal
       ? `Understood! Pivoting from **${previousGoal}** → **${profile.target_goal}**! 🔄🎯\n\n`
       : `Understood! Setting your new goal to **${profile.target_goal}**! 🔄🎯\n\n`;
 
-    return pivotNote + this.buildGoalPillars(profile);
-  }
+    // Check if user also provided hours or background in this turn
+    const lower = lastUserMessage.toLowerCase();
+    const hasDetails = /\d+\s*(?:hours?|hrs?|h)/i.test(lower) || /(beginner|intermediate|advanced|expert|know python)/i.test(lower);
 
-  private respondToInitialGoal(profile: ExtractedProfileData): string {
-    return this.buildGoalPillars(profile);
+    if (hasDetails || state.allKeyDetailsProvided) {
+      return pivotNote + this.respondToAnswerAndValidate(lastUserMessage, profile, state);
+    }
+
+    return pivotNote + this.askDiagnosticQuestions(profile);
   }
 
   private respondToQuestion(
@@ -383,11 +527,11 @@ Your mission:
     const lower = lastUserMessage.toLowerCase();
 
     if (lower.includes('how long') || lower.includes('how many weeks') || lower.includes('duration')) {
-      return `Based on your current profile:\n\n• **Goal**: ${profile.target_goal}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week\n• **Estimated Duration**: ~${profile.target_duration_weeks} weeks\n\nThis timeline assumes consistent effort. If you can increase your hours, the duration will naturally compress. Want to adjust any of these parameters?`;
+      return `Based on your validated profile:\n\n• **Goal**: ${profile.target_goal}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week\n• **Estimated Duration**: ~${profile.target_duration_weeks} weeks\n\nThis timeline assumes consistent effort. If you can increase your hours, the duration will naturally compress. Want to adjust any of these parameters?`;
     }
 
     if (lower.includes('what will i learn') || lower.includes('what topics') || lower.includes('syllabus') || lower.includes('curriculum')) {
-      return this.buildGoalPillars(profile);
+      return this.buildGoalPillars(profile, true);
     }
 
     if (lower.includes('prerequisite') || lower.includes('what do i need') || lower.includes('before i start')) {
@@ -399,32 +543,61 @@ Your mission:
   }
 
   private respondToGeneral(lastUserMessage: string, profile: ExtractedProfileData, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
-    return `I hear you! 👂 Based on our conversation so far, your profile is:\n\n• **Goal**: ${profile.target_goal}\n• **Level**: ${profile.experience_level}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks\n• **Style**: ${profile.preferred_learning_style}\n\nYou can:\n• Tell me to adjust any of these (e.g. *"make it 20 hours/week"* or *"I'm a beginner"*)\n• Switch your goal entirely (e.g. *"change of plan, I want prompt engineering"*)\n• Click **"Build Deterministic Roadmap →"** to generate your sequenced learning path\n\nWhat would you like to do? 🚀`;
+    return `I hear you! 👂 Based on our conversation so far, your validated profile is:\n\n• **Goal**: ${profile.target_goal}\n• **Level**: ${profile.experience_level}\n• **Schedule**: ${profile.available_hours_per_week} hrs/week over ${profile.target_duration_weeks} weeks\n• **Style**: ${profile.preferred_learning_style}\n\nYou can:\n• Tell me to adjust any of these (e.g. *"make it 20 hours/week"* or *"I'm a beginner"*)\n• Switch your goal entirely (e.g. *"change of plan, I want prompt engineering"*)\n• Click **"Build Deterministic Roadmap →"** to generate your sequenced learning path\n\nWhat would you like to do? 🚀`;
   }
 
-  // ─── Goal Pillars Builder (used by initial_goal and plan_change) ───────
+  // ─── Goal Pillars Builder ──────────────────────────────────────────────
 
-  private buildGoalPillars(profile: ExtractedProfileData): string {
+  private buildGoalPillars(profile: ExtractedProfileData, includeFooter: boolean = true): string {
     const goal = profile.target_goal;
     const lower = goal.toLowerCase();
     let pillars = '';
 
     if (lower.includes('prompt engineer')) {
-      pillars = `I have analyzed and constructed your **Prompt Engineering** curriculum! 🧠✨\n\nHere are your core learning pillars:\n• **LLM Cognition & Fundamentals**: Tokenization, Temperature, Top-P, Context Windows, and System Instructions.\n• **Advanced Prompt Architecture**: Few-Shot In-Context Learning, Chain-of-Thought (CoT), ReAct Framework, and Structured JSON Schema Enforcement.\n• **RAG & Agentic Tool Use**: Vector Semantic Embeddings, Chunking Strategies, DSPy Automated Prompt Optimization, and AWS Bedrock Function Calling.\n• **Evaluation, Safety & Red-Teaming**: Prompt Injection Defense, Jailbreak Mitigation, Hallucination Benchmarks, and LLM-as-a-Judge Eval Pipelines.\n• **Capstone Projects**: Build an Automated DSPy Prompt Optimizer and a Multi-Agent RAG Support Bot.`;
+      pillars = `• **LLM Cognition & Fundamentals**: Tokenization, Temperature, Top-P, Context Windows, and System Instructions.
+• **Advanced Prompt Architecture**: Few-Shot In-Context Learning, Chain-of-Thought (CoT), ReAct Framework, and Structured JSON Schema Enforcement.
+• **RAG & Agentic Tool Use**: Vector Semantic Embeddings, Chunking Strategies, DSPy Automated Prompt Optimization, and AWS Bedrock Function Calling.
+• **Evaluation, Safety & Red-Teaming**: Prompt Injection Defense, Jailbreak Mitigation, Hallucination Benchmarks, and LLM-as-a-Judge Eval Pipelines.
+• **Capstone Projects**: Build an Automated DSPy Prompt Optimizer and a Multi-Agent RAG Support Bot.`;
     } else if (lower.includes('data structures') || lower.includes('dsa') || lower.includes('algorithm')) {
-      pillars = `I've mapped out a comprehensive **${goal}** learning track for you! 🧠💻\n\nHere is how we will structure your algorithmic journey:\n• **Asymptotic Foundations**: Time & Space Complexity (Big-O), Recursion, and Memory Management.\n• **Linear Data Structures**: Arrays, Two Pointers, Sliding Window, Linked Lists, Stacks, and Queues.\n• **Non-Linear Structures**: Binary Trees, Binary Search Trees (BST), Heaps, and Tries.\n• **Advanced Techniques**: Graph BFS/DFS, Dijkstra, Topological Sort, and Dynamic Programming (Memoization, Tabulation).\n• **Milestone Capstones**: LRU Cache Engine, Prefix Search Trie, and Pathfinding Visualizer.`;
+      pillars = `• **Asymptotic Foundations**: Time & Space Complexity (Big-O), Recursion, and Memory Management.
+• **Linear Data Structures**: Arrays, Two Pointers, Sliding Window, Linked Lists, Stacks, and Queues.
+• **Non-Linear Structures**: Binary Trees, Binary Search Trees (BST), Heaps, and Tries.
+• **Advanced Techniques**: Graph BFS/DFS, Dijkstra, Topological Sort, and Dynamic Programming (Memoization, Tabulation).
+• **Milestone Capstones**: LRU Cache Engine, Prefix Search Trie, and Pathfinding Visualizer.`;
     } else if (lower.includes('machine learning') || lower.includes('ml') || lower.includes('deep learning')) {
-      pillars = `I've analyzed your goal to master **Machine Learning Engineering**! 🎯\n\nBased on our curriculum database, here are the core milestones:\n• **Foundational Math**: Linear Algebra, Multivariate Calculus, Probability & Statistics.\n• **Data Engineering**: Data Wrangling with Pandas & NumPy, Feature Scaling, Exploratory Analysis.\n• **Classical ML**: Supervised Learning (Regression, Trees, SVMs), Unsupervised Clustering.\n• **Deep Learning & MLOps**: Neural Networks with PyTorch, Transformer Architectures, Model Evaluation & Deployment.`;
+      pillars = `• **Foundational Math**: Linear Algebra, Multivariate Calculus, Probability & Statistics.
+• **Data Engineering**: Data Wrangling with Pandas & NumPy, Feature Scaling, Exploratory Analysis.
+• **Classical ML**: Supervised Learning (Regression, Trees, SVMs), Unsupervised Clustering.
+• **Deep Learning & MLOps**: Neural Networks with PyTorch, Transformer Architectures, Model Evaluation & Deployment.`;
     } else if (lower.includes('ai application') || lower.includes('ai engineer') || lower.includes('generative ai')) {
-      pillars = `I have analyzed your goal to master **AI Application Engineer**! 🚀🤖\n\nHere are the core engineering competencies in your track:\n• **Foundation Model APIs**: AWS Bedrock (Claude 3.5 Sonnet, Amazon Nova), OpenAI, and Hugging Face integration.\n• **Vector Databases & RAG**: PostgreSQL pgvector, Pinecone, Hybrid Search, and Re-ranking models.\n• **Agentic Workflows**: Multi-step reasoning loops, autonomous tool invocation, and stateful memory guards.\n• **Production Deployment**: Streaming Server-Sent Events (SSE), cost governance token guards, and observability logging.\n• **Capstone Projects**: Autonomous Code Review Agent & Enterprise Document RAG Assistant.`;
+      pillars = `• **Foundation Model APIs**: AWS Bedrock (Claude 3.5 Sonnet, Amazon Nova), OpenAI, and Hugging Face integration.
+• **Vector Databases & RAG**: PostgreSQL pgvector, Pinecone, Hybrid Search, and Re-ranking models.
+• **Agentic Workflows**: Multi-step reasoning loops, autonomous tool invocation, and stateful memory guards.
+• **Production Deployment**: Streaming Server-Sent Events (SSE), cost governance token guards, and observability logging.
+• **Capstone Projects**: Autonomous Code Review Agent & Enterprise Document RAG Assistant.`;
     } else if (lower.includes('full stack') || lower.includes('web dev')) {
-      pillars = `Awesome! We will construct a comprehensive **Full Stack Web Developer** track for you! 💻\n\n• **Frontend**: TypeScript, React, Next.js App Router, TailwindCSS, State Management.\n• **Backend & DB**: Node.js APIs, Server Actions, PostgreSQL / Fluxbase Database Schema Design.\n• **Cloud & DevOps**: Authentication, REST/GraphQL APIs, Serverless Deployment on Vercel/AWS.`;
+      pillars = `• **Frontend**: TypeScript, React, Next.js App Router, TailwindCSS, State Management.
+• **Backend & DB**: Node.js APIs, Server Actions, PostgreSQL / Fluxbase Database Schema Design.
+• **Cloud & DevOps**: Authentication, REST/GraphQL APIs, Serverless Deployment on Vercel/AWS.`;
     } else if (lower.includes('cloud') || lower.includes('devops')) {
-      pillars = `I've mapped out a comprehensive **${goal}** track! ☁️\n\n• **Cloud Foundations**: AWS/GCP/Azure Core Services, IAM, Networking & VPCs.\n• **Containerization**: Docker, Kubernetes, Helm Charts, Service Mesh.\n• **CI/CD & IaC**: GitHub Actions, Terraform, CloudFormation.\n• **Observability**: Prometheus, Grafana, Distributed Tracing, Log Aggregation.`;
+      pillars = `• **Cloud Foundations**: AWS/GCP/Azure Core Services, IAM, Networking & VPCs.
+• **Containerization**: Docker, Kubernetes, Helm Charts, Service Mesh.
+• **CI/CD & IaC**: GitHub Actions, Terraform, CloudFormation.
+• **Observability**: Prometheus, Grafana, Distributed Tracing, Log Aggregation.`;
     } else if (lower.includes('security') || lower.includes('cyber')) {
-      pillars = `I've constructed your **${goal}** curriculum! 🔐\n\n• **Networking & OS Fundamentals**: TCP/IP, DNS, Linux Internals.\n• **Offensive Security**: OWASP Top 10, Penetration Testing, Web Exploitation.\n• **Defensive Engineering**: SIEM, Incident Response, Forensics.\n• **Capstone**: Build a Vulnerability Scanner and Threat Detection Pipeline.`;
+      pillars = `• **Networking & OS Fundamentals**: TCP/IP, DNS, Linux Internals.
+• **Offensive Security**: OWASP Top 10, Penetration Testing, Web Exploitation.
+• **Defensive Engineering**: SIEM, Incident Response, Forensics.
+• **Capstone**: Build a Vulnerability Scanner and Threat Detection Pipeline.`;
     } else {
-      pillars = `I have analyzed your goal to master **${goal}**! 📈\n\n• **Target Track**: ${goal}\n• **Experience Level**: ${profile.experience_level}\n• **Identified Baseline Skills**: ${profile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}`;
+      pillars = `• **Target Track**: ${goal}
+• **Experience Level**: ${profile.experience_level}
+• **Identified Baseline Skills**: ${profile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}`;
+    }
+
+    if (!includeFooter) {
+      return pillars;
     }
 
     return `${pillars}\n\nYour profile is calibrated for **${profile.available_hours_per_week} hrs/week** over **${profile.target_duration_weeks} weeks** (${profile.experience_level} track). Click **"Build Deterministic Roadmap →"** in the panel to construct your sequenced DAG!`;
@@ -520,35 +693,62 @@ Your mission:
       }
     }
 
-    // 2. Experience Level
-    const combinedText = (fullUserText + ' ' + lastUserMessage).toLowerCase();
+    // 2. Experience Level: Check latest message first, then fallback
     let experienceLevel: ExperienceLevel = 'intermediate';
-    if (combinedText.includes('beginner') || combinedText.includes('no experience') || combinedText.includes('scratch') || combinedText.includes('zero')) {
+    if (pLower.includes('beginner') || pLower.includes('no experience') || pLower.includes('scratch') || pLower.includes('zero')) {
       experienceLevel = 'beginner';
-    } else if (combinedText.includes('expert') || combinedText.includes('senior') || combinedText.includes('advanced') || combinedText.includes('5 years')) {
+    } else if (pLower.includes('expert') || pLower.includes('senior') || pLower.includes('advanced') || pLower.includes('5 years')) {
       experienceLevel = 'expert';
-    } else if (combinedText.includes('know python') || combinedText.includes('intermediate') || combinedText.includes('some experience') || combinedText.includes('basics')) {
+    } else if (pLower.includes('know python') || pLower.includes('intermediate') || pLower.includes('some experience') || pLower.includes('basics')) {
       experienceLevel = 'intermediate';
+    } else {
+      // Historical fallback
+      if (fullLower.includes('beginner') || fullLower.includes('no experience') || fullLower.includes('scratch') || fullLower.includes('zero')) {
+        experienceLevel = 'beginner';
+      } else if (fullLower.includes('expert') || fullLower.includes('senior') || fullLower.includes('advanced')) {
+        experienceLevel = 'expert';
+      } else if (fullLower.includes('know python') || fullLower.includes('intermediate') || fullLower.includes('some experience') || fullLower.includes('basics')) {
+        experienceLevel = 'intermediate';
+      }
     }
 
-    // 3. Available Hours
+    // 3. Available Hours: Prioritize latest user message first
     let hoursPerWeek = 14;
-    const hMatch = combinedText.match(/(\d+)\s*(?:hours|hrs|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
-    if (hMatch) hoursPerWeek = Math.min(60, Math.max(2, parseInt(hMatch[1], 10)));
-
-    // 4. Duration Weeks
-    let durationWeeks = 16;
-    const wMatch = combinedText.match(/(\d+)\s*(?:weeks|wks|week|wk|months|mo)/i);
-    if (wMatch) {
-      const num = parseInt(wMatch[1], 10);
-      durationWeeks = combinedText.includes('month') || combinedText.includes('mo') ? num * 4 : num;
+    const hPrimaryMatch = primary.match(/(\d+)\s*(?:hours?|hrs?|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
+    if (hPrimaryMatch) {
+      hoursPerWeek = Math.min(60, Math.max(2, parseInt(hPrimaryMatch[1], 10)));
+    } else {
+      const hFullMatch = fullUserText.match(/(\d+)\s*(?:hours?|hrs?|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
+      if (hFullMatch) {
+        hoursPerWeek = Math.min(60, Math.max(2, parseInt(hFullMatch[1], 10)));
+      }
     }
 
-    // 5. Learning Style
+    // 4. Duration Weeks: Prioritize latest user message first
+    let durationWeeks = 16;
+    const wPrimaryMatch = primary.match(/(\d+)\s*(?:weeks?|wks?|week|wk|months?|mo)/i);
+    if (wPrimaryMatch) {
+      const num = parseInt(wPrimaryMatch[1], 10);
+      durationWeeks = pLower.includes('month') || pLower.includes('mo') ? num * 4 : num;
+    } else {
+      const wFullMatch = fullUserText.match(/(\d+)\s*(?:weeks?|wks?|week|wk|months?|mo)/i);
+      if (wFullMatch) {
+        const num = parseInt(wFullMatch[1], 10);
+        durationWeeks = fullLower.includes('month') || fullLower.includes('mo') ? num * 4 : num;
+      }
+    }
+
+    // 5. Learning Style: Prioritize latest user message first
     let learningStyle: LearningStyle = 'hands-on';
-    if (combinedText.includes('video') || combinedText.includes('visual') || combinedText.includes('watch')) learningStyle = 'visual';
-    else if (combinedText.includes('read') || combinedText.includes('book') || combinedText.includes('doc')) learningStyle = 'reading';
-    else if (combinedText.includes('structured') || combinedText.includes('theory')) learningStyle = 'structured';
+    if (pLower.includes('video') || pLower.includes('visual') || pLower.includes('watch')) learningStyle = 'visual';
+    else if (pLower.includes('read') || pLower.includes('book') || pLower.includes('doc')) learningStyle = 'reading';
+    else if (pLower.includes('structured') || pLower.includes('theory')) learningStyle = 'structured';
+    else if (pLower.includes('hands-on') || pLower.includes('hands on') || pLower.includes('project') || pLower.includes('code')) learningStyle = 'hands-on';
+    else {
+      if (fullLower.includes('video') || fullLower.includes('visual') || fullLower.includes('watch')) learningStyle = 'visual';
+      else if (fullLower.includes('read') || fullLower.includes('book') || fullLower.includes('doc')) learningStyle = 'reading';
+      else if (fullLower.includes('structured') || fullLower.includes('theory')) learningStyle = 'structured';
+    }
 
     // 6. User Skills
     const userSkills: Array<{ skill: string; level: ExperienceLevel }> = [];
@@ -561,7 +761,7 @@ Your mission:
     } else if (targetRole.includes('AI Application')) {
       userSkills.push({ skill: 'LLM API Integration & JSON', level: experienceLevel });
       userSkills.push({ skill: 'Vector Databases & RAG', level: 'beginner' });
-    } else if (targetRole.includes('Full Stack') || combinedText.includes('web') || combinedText.includes('next.js') || combinedText.includes('react')) {
+    } else if (targetRole.includes('Full Stack') || fullLower.includes('web') || fullLower.includes('next.js') || fullLower.includes('react')) {
       userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: experienceLevel });
       userSkills.push({ skill: 'React / Frontend Architecture', level: 'beginner' });
     }

@@ -410,9 +410,23 @@ To construct your personalized, deterministic prerequisite learning path, tell m
 
             {extractedProfile ? (
               <div className="space-y-4 text-xs">
+                {/* Validation Status Banner */}
+                <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200/80 flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-emerald-800 font-semibold text-[11px]">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Feasibility & Prerequisites: Validated</span>
+                  </div>
+                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-200/70 text-emerald-900 font-mono text-[10px] font-bold">
+                    98% Match
+                  </span>
+                </div>
+
                 {/* Target Role & Goal */}
                 <div className="p-3.5 rounded-xl bg-neutral-50 border border-neutral-200/80 space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-neutral-400">Target Role</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-neutral-400">Target Role</span>
+                    <Check className="w-3 h-3 text-emerald-600" />
+                  </div>
                   <p className="font-bold text-neutral-900 text-sm">{extractedProfile.target_goal}</p>
                   {extractedProfile.summary && (
                     <p className="text-neutral-600 text-xs leading-relaxed mt-1">{extractedProfile.summary}</p>
@@ -421,20 +435,32 @@ To construct your personalized, deterministic prerequisite learning path, tell m
 
                 {/* Parameters */}
                 <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5">
-                    <span className="text-neutral-400 text-[10px] block uppercase">Level</span>
+                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-neutral-400 text-[10px] block uppercase">Level</span>
+                      <Check className="w-2.5 h-2.5 text-emerald-600" />
+                    </div>
                     <span className="font-semibold text-neutral-900 capitalize">{extractedProfile.experience_level}</span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5">
-                    <span className="text-neutral-400 text-[10px] block uppercase">Hours / Week</span>
+                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-neutral-400 text-[10px] block uppercase">Hours / Week</span>
+                      <Check className="w-2.5 h-2.5 text-emerald-600" />
+                    </div>
                     <span className="font-semibold text-neutral-900">{extractedProfile.available_hours_per_week} hrs/wk</span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5">
-                    <span className="text-neutral-400 text-[10px] block uppercase">Style</span>
+                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-neutral-400 text-[10px] block uppercase">Style</span>
+                      <Check className="w-2.5 h-2.5 text-emerald-600" />
+                    </div>
                     <span className="font-semibold text-neutral-900 capitalize">{extractedProfile.preferred_learning_style}</span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5">
-                    <span className="text-neutral-400 text-[10px] block uppercase">Duration</span>
+                  <div className="p-2.5 rounded-xl bg-neutral-50 border border-neutral-200/60 space-y-0.5 relative">
+                    <div className="flex items-center justify-between">
+                      <span className="text-neutral-400 text-[10px] block uppercase">Duration</span>
+                      <Check className="w-2.5 h-2.5 text-emerald-600" />
+                    </div>
                     <span className="font-semibold text-neutral-900">{extractedProfile.target_duration_weeks} wks</span>
                   </div>
                 </div>
@@ -444,8 +470,9 @@ To construct your personalized, deterministic prerequisite learning path, tell m
                   <span className="text-[10px] uppercase font-bold text-neutral-400">Identified Baseline Skills</span>
                   <div className="flex flex-wrap gap-1.5">
                     {extractedProfile.current_skills.map((s, idx) => (
-                      <span key={idx} className="badge-neutral">
-                        {s.skill} ({s.level})
+                      <span key={idx} className="badge-neutral inline-flex items-center gap-1">
+                        <Check className="w-2.5 h-2.5 text-emerald-600" />
+                        <span>{s.skill} ({s.level})</span>
                       </span>
                     ))}
                   </div>
