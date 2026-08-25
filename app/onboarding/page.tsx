@@ -205,11 +205,11 @@ To construct your personalized, deterministic prerequisite learning path, tell m
                 AI Learning Architect
               </h1>
               <span className="px-2 py-0.5 rounded-full bg-neutral-100 border border-neutral-200 text-[10px] font-mono font-medium text-neutral-600">
-                AWS Bedrock · Claude 3.5
+                Zhipu AI · GLM 5.3
               </span>
             </div>
             <p className="text-[11px] text-neutral-500">
-              Conversational profiling with live Fluxbase database tool calling
+              Conversational profiling with GLM 5.3 & Fluxbase database tool calling
             </p>
           </div>
         </div>
@@ -334,7 +334,7 @@ To construct your personalized, deterministic prerequisite learning path, tell m
                   </div>
                   <div className="p-4 rounded-2xl bg-neutral-50 border border-neutral-200/80 rounded-tl-none flex items-center gap-2.5 text-xs text-neutral-500 font-mono">
                     <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-900" />
-                    <span>AWS Bedrock agent executing reasoning loop & Fluxbase queries...</span>
+                    <span>Zhipu GLM 5.3 agent executing reasoning loop & Fluxbase queries...</span>
                   </div>
                 </div>
               )}

@@ -1,6 +1,7 @@
 import { AGENT_TOOLS, AgentReasoningStep, AgentToolCall } from './agent_tools';
 import { ExtractedProfileData } from './goal_analyzer';
 import { bedrock } from '../aws/bedrock';
+import { glm } from './glm_client';
 import { ExperienceLevel, LearningStyle } from '../db/schema';
 
 export interface AgentExecutionResult {
@@ -28,54 +29,6 @@ export class AgenticEngine {
     const lastUserMessage = userTurns.length > 0 ? userTurns[userTurns.length - 1].content.trim() : '';
     const fullUserText = userTurns.map(c => c.content).join(' ');
 
-    // 1. Check if Live AWS Bedrock is configured with credentials
-    if (bedrock.isLiveConfigured()) {
-      try {
-        const systemPrompt = `You are the empathetic, expert AI Learning Architect on AWS Bedrock (Anthropic Claude 3.5 Sonnet).
-Your mission:
-1. Converse completely naturally, dynamically, and empathetically with the learner.
-2. If the user changes their plan (e.g. "change of plan i need prompt engineer"), acknowledge the switch immediately and focus 100% on their new goal.
-3. When the user mentions any goal (Prompt Engineer, AI Engineer, DSA, ML, Rust, Placement Aptitude), break down their core prerequisite pillars and milestones.
-4. Always write clean, formatted markdown. Never repeat outdated goals.`;
-
-        const transcript = conversation
-          .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
-          .join('\n\n');
-
-        const bedrockRes = await bedrock.invokeText(`${transcript}\n\nAssistant:`, {
-          systemPrompt,
-          modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-          userId
-        });
-
-        const profile = this.extractDynamicProfile(fullUserText, lastUserMessage);
-        
-        AGENT_TOOLS.persist_learner_profile({
-          userId,
-          profile: {
-            target_goal: profile.target_goal,
-            experience_level: profile.experience_level,
-            available_hours_per_week: profile.available_hours_per_week,
-            preferred_learning_style: profile.preferred_learning_style,
-            interests: profile.interests,
-            target_duration_weeks: profile.target_duration_weeks,
-            current_skills_raw: profile.current_skills.map(s => `${s.skill} (${s.level})`)
-          }
-        }).catch(err => console.warn('Persistence error:', err));
-
-        return {
-          reply: bedrockRes.result,
-          steps: [{ thought: 'Generated dynamic completion via AWS Bedrock Claude 3.5 Sonnet.' }],
-          toolCalls: [{ tool: 'aws_bedrock_claude', args: { model: 'claude-3.5-sonnet' }, result: 'Dynamic LLM response', status: 'success' }],
-          extractedProfile: profile,
-          isReadyToBuild: this.hasExplicitGoal(lastUserMessage) || this.hasExplicitGoal(fullUserText)
-        };
-      } catch (err) {
-        console.warn('Live AWS Bedrock call failed, using dynamic neural response:', err);
-      }
-    }
-
-    // 2. Dynamic Conversational Generation Engine (100% dynamic, context-aware)
     const extractedProfile = this.extractDynamicProfile(fullUserText, lastUserMessage);
     const hasGoal = this.hasExplicitGoal(lastUserMessage) || this.hasExplicitGoal(fullUserText);
     const targetRole = extractedProfile.target_goal;
@@ -90,7 +43,7 @@ Your mission:
       toolCalls.push({
         tool: 'search_curriculum_skills',
         args: { category },
-        result: `${matchedSkills?.length || 0} skills loaded`,
+        result: `${matchedSkills?.length || 0} skills loaded from Fluxbase DB`,
         status: 'success'
       });
 
@@ -108,7 +61,81 @@ Your mission:
       }).catch(() => {});
     }
 
-    // 3. Generate Fluid, Contextual Natural Language Response
+    // 1. Check if Live GLM 5.3 is configured with API Key
+    if (glm.isConfigured()) {
+      try {
+        const systemPrompt = `You are the empathetic, expert AI Learning Architect powered by Zhipu AI GLM 5.3.
+Your mission:
+1. Converse naturally, dynamically, and empathetically with the learner.
+2. Ask diagnostic questions when a learner introduces a new goal without specifying their schedule or background.
+3. Validate their requests (feasibility, hours, experience level) and provide structured, tailored curriculum recommendations.
+4. When the user asks for Backend Developer, focus exclusively on Backend (APIs, Databases, Caching, Queues, Security) rather than frontend or generic full stack.
+5. Always write clean, formatted markdown.`;
+
+        const glmMessages = conversation.map(m => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content
+        }));
+
+        const glmRes = await glm.invokeChat(glmMessages, systemPrompt);
+
+        if (glmRes.success && glmRes.reply) {
+          toolCalls.push({
+            tool: 'glm_5_3_zhipu_ai',
+            args: { model: glmRes.model, latencyMs: glmRes.latencyMs },
+            result: `Dynamic completion from ${glmRes.model} (${glmRes.usage?.total_tokens || 0} tokens)`,
+            status: 'success'
+          });
+
+          return {
+            reply: glmRes.reply,
+            steps: [{ thought: `Generated dynamic natural language completion via Zhipu AI ${glmRes.model}.` }],
+            toolCalls,
+            extractedProfile,
+            isReadyToBuild: hasGoal
+          };
+        } else if (glmRes.error) {
+          toolCalls.push({
+            tool: 'glm_5_3_zhipu_ai',
+            args: { model: glmRes.model },
+            result: glmRes.error,
+            status: 'error'
+          });
+        }
+      } catch (err) {
+        console.warn('Live GLM 5.3 call failed:', err);
+      }
+    }
+
+    // 2. Check if Live AWS Bedrock is configured with credentials
+    if (bedrock.isLiveConfigured()) {
+      try {
+        const systemPrompt = `You are the empathetic, expert AI Learning Architect on AWS Bedrock.
+Converse completely naturally and validate learner goals.`;
+
+        const transcript = conversation
+          .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
+          .join('\n\n');
+
+        const bedrockRes = await bedrock.invokeText(`${transcript}\n\nAssistant:`, {
+          systemPrompt,
+          modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+          userId
+        });
+
+        return {
+          reply: bedrockRes.result,
+          steps: [{ thought: 'Generated dynamic completion via AWS Bedrock Claude 3.5 Sonnet.' }],
+          toolCalls: [{ tool: 'aws_bedrock_claude', args: { model: 'claude-3.5-sonnet' }, result: 'Dynamic LLM response', status: 'success' }],
+          extractedProfile,
+          isReadyToBuild: hasGoal
+        };
+      } catch (err) {
+        console.warn('Live AWS Bedrock call failed:', err);
+      }
+    }
+
+    // 3. Dynamic Conversational Generation Engine (100% dynamic, context-aware)
     const reply = this.generateDynamicConversationalResponse(lastUserMessage, conversation, extractedProfile, hasGoal);
 
     return {
