@@ -99,7 +99,19 @@ export const SEED_ROLE_REQUIREMENTS: RoleSkillRequirement[] = [
   { id: 'role_ml_8', target_role: 'Machine Learning Engineer', skill_id: 'devops_mlops', required_level: 'advanced', importance: 'must_have', sequence_weight: 8 },
   { id: 'role_ml_9', target_role: 'Machine Learning Engineer', skill_id: 'devops_aws_cloud', required_level: 'intermediate', importance: 'core', sequence_weight: 9 },
 
-  // 3. Full Stack Web Developer
+  // 3. Backend Developer
+  { id: 'role_be_1', target_role: 'Backend Developer', skill_id: 'prog_python', required_level: 'advanced', importance: 'must_have', sequence_weight: 1 },
+  { id: 'role_be_2', target_role: 'Backend Developer', skill_id: 'data_sql', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
+  { id: 'role_be_3', target_role: 'Backend Developer', skill_id: 'web_backend_apis', required_level: 'advanced', importance: 'must_have', sequence_weight: 3 },
+  { id: 'role_be_4', target_role: 'Backend Developer', skill_id: 'devops_docker_containers', required_level: 'intermediate', importance: 'must_have', sequence_weight: 4 },
+  { id: 'role_be_5', target_role: 'Backend Developer', skill_id: 'sec_app_cloud_security', required_level: 'intermediate', importance: 'core', sequence_weight: 5 },
+
+  // 4. Frontend Developer
+  { id: 'role_fe_1', target_role: 'Frontend Developer', skill_id: 'prog_typescript', required_level: 'advanced', importance: 'must_have', sequence_weight: 1 },
+  { id: 'role_fe_2', target_role: 'Frontend Developer', skill_id: 'web_react_next', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
+  { id: 'role_fe_3', target_role: 'Frontend Developer', skill_id: 'web_backend_apis', required_level: 'beginner', importance: 'core', sequence_weight: 3 },
+
+  // 5. Full Stack Web Developer
   { id: 'role_fs_1', target_role: 'Full Stack Developer', skill_id: 'prog_typescript', required_level: 'advanced', importance: 'must_have', sequence_weight: 1 },
   { id: 'role_fs_2', target_role: 'Full Stack Developer', skill_id: 'web_react_next', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
   { id: 'role_fs_3', target_role: 'Full Stack Developer', skill_id: 'data_sql', required_level: 'intermediate', importance: 'must_have', sequence_weight: 3 },
@@ -107,20 +119,29 @@ export const SEED_ROLE_REQUIREMENTS: RoleSkillRequirement[] = [
   { id: 'role_fs_5', target_role: 'Full Stack Developer', skill_id: 'devops_docker_containers', required_level: 'intermediate', importance: 'core', sequence_weight: 5 },
   { id: 'role_fs_6', target_role: 'Full Stack Developer', skill_id: 'sec_app_cloud_security', required_level: 'intermediate', importance: 'core', sequence_weight: 6 },
 
-  // 4. Cloud & DevOps Architect
+  // 6. Cloud & DevOps Architect
   { id: 'role_do_1', target_role: 'DevOps Engineer', skill_id: 'prog_python', required_level: 'intermediate', importance: 'must_have', sequence_weight: 1 },
   { id: 'role_do_2', target_role: 'DevOps Engineer', skill_id: 'devops_docker_containers', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
   { id: 'role_do_3', target_role: 'DevOps Engineer', skill_id: 'devops_aws_cloud', required_level: 'advanced', importance: 'must_have', sequence_weight: 3 },
   { id: 'role_do_4', target_role: 'DevOps Engineer', skill_id: 'devops_cicd_terraform', required_level: 'advanced', importance: 'must_have', sequence_weight: 4 },
   { id: 'role_do_5', target_role: 'DevOps Engineer', skill_id: 'sec_app_cloud_security', required_level: 'advanced', importance: 'must_have', sequence_weight: 5 },
 
-  // 5. Data Scientist
+  // 7. Data Scientist
   { id: 'role_ds_1', target_role: 'Data Scientist', skill_id: 'prog_python', required_level: 'advanced', importance: 'must_have', sequence_weight: 1 },
   { id: 'role_ds_2', target_role: 'Data Scientist', skill_id: 'math_statistics', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
   { id: 'role_ds_3', target_role: 'Data Scientist', skill_id: 'data_sql', required_level: 'advanced', importance: 'must_have', sequence_weight: 3 },
   { id: 'role_ds_4', target_role: 'Data Scientist', skill_id: 'data_pandas_numpy', required_level: 'advanced', importance: 'must_have', sequence_weight: 4 },
   { id: 'role_ds_5', target_role: 'Data Scientist', skill_id: 'ai_ml_foundations', required_level: 'advanced', importance: 'must_have', sequence_weight: 5 },
-  { id: 'role_ds_6', target_role: 'Data Scientist', skill_id: 'ai_deep_learning', required_level: 'intermediate', importance: 'core', sequence_weight: 6 }
+  { id: 'role_ds_6', target_role: 'Data Scientist', skill_id: 'ai_deep_learning', required_level: 'intermediate', importance: 'core', sequence_weight: 6 },
+
+  // 8. DSA in Python
+  { id: 'role_dsa_1', target_role: 'DSA in Python', skill_id: 'prog_python', required_level: 'advanced', importance: 'must_have', sequence_weight: 1 },
+  { id: 'role_dsa_2', target_role: 'DSA in Python', skill_id: 'prog_data_structures', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
+
+  // 9. Prompt Engineer
+  { id: 'role_pe_1', target_role: 'Prompt Engineer', skill_id: 'prog_python', required_level: 'intermediate', importance: 'core', sequence_weight: 1 },
+  { id: 'role_pe_2', target_role: 'Prompt Engineer', skill_id: 'ai_transformers_nlp', required_level: 'advanced', importance: 'must_have', sequence_weight: 2 },
+  { id: 'role_pe_3', target_role: 'Prompt Engineer', skill_id: 'ai_llm_engineering', required_level: 'advanced', importance: 'must_have', sequence_weight: 3 }
 ];
 
 export const SEED_RESOURCES: Resource[] = [
