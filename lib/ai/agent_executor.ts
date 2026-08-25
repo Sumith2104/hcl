@@ -24,40 +24,81 @@ export class AgenticEngine {
 
     const userTurns = conversation.filter(c => c.role === 'user');
     const fullUserText = userTurns.map(c => c.content).join(' ');
-    const lastUserMessage = userTurns.length > 0 ? userTurns[userTurns.length - 1].content : '';
+    const lastUserMessage = userTurns.length > 0 ? userTurns[userTurns.length - 1].content.trim() : '';
+    const lastLower = lastUserMessage.toLowerCase();
 
-    // --- STEP 1: Reason about user's goal & domain ---
-    steps.push({
-      thought: `Analyzing learner statement: "${lastUserMessage}". Identifying domain, career objective, and technical background.`
-    });
+    // --- Check if Live AWS Bedrock is configured ---
+    if (bedrock.isLiveConfigured()) {
+      try {
+        const systemPrompt = `You are the empathetic, expert AI Learning Architect powered by AWS Bedrock (Anthropic Claude 3.5 Sonnet).
+Your mission:
+1. Converse naturally, engagingly, and empathetically with the learner.
+2. Answer greetings (e.g. "how are you?"), questions, or technical inquiries directly and warmly.
+3. Understand their career aspirations (e.g. Machine Learning, AI Engineering, Full Stack, Cloud/DevOps).
+4. Guide them through identifying their background, available study hours per week, and preferred learning style.
+5. Ground your advice in structured prerequisite milestone paths.`;
 
-    // Determine target role and domain dynamically
-    const lower = fullUserText.toLowerCase();
-    let targetRole = 'AI Application Engineer';
-    let category = 'ai_ml';
+        const conversationTranscript = conversation
+          .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
+          .join('\n\n');
 
-    if (lower.includes('machine learning') || lower.includes('ml engineer') || lower.includes('model')) {
-      targetRole = 'Machine Learning Engineer';
-      category = 'ai_ml';
-    } else if (lower.includes('data science') || lower.includes('data scientist') || lower.includes('analytics') || lower.includes('pandas')) {
-      targetRole = 'Data Scientist';
-      category = 'systems_data';
-    } else if (lower.includes('full stack') || lower.includes('web dev') || lower.includes('next.js') || lower.includes('react') || lower.includes('frontend') || lower.includes('backend')) {
-      targetRole = 'Full Stack Web Developer';
-      category = 'programming';
-    } else if (lower.includes('cloud') || lower.includes('devops') || lower.includes('aws') || lower.includes('docker') || lower.includes('kubernetes')) {
-      targetRole = 'Cloud & DevOps Architect';
-      category = 'engineering_devops';
-    } else if (lower.includes('security') || lower.includes('cyber') || lower.includes('penetration')) {
-      targetRole = 'Cybersecurity Specialist';
-      category = 'security';
+        const bedrockPrompt = `${conversationTranscript}\n\nAssistant:`;
+
+        const response = await bedrock.invokeText(bedrockPrompt, {
+          systemPrompt,
+          modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+          userId
+        });
+
+        // Also perform background profile extraction
+        const profile = this.extractDynamicProfile(fullUserText, lastLower);
+        await AGENT_TOOLS.persist_learner_profile({
+          userId,
+          profile: {
+            target_goal: profile.target_goal,
+            experience_level: profile.experience_level,
+            available_hours_per_week: profile.available_hours_per_week,
+            preferred_learning_style: profile.preferred_learning_style,
+            interests: profile.interests,
+            target_duration_weeks: profile.target_duration_weeks,
+            current_skills_raw: profile.current_skills.map(s => `${s.skill} (${s.level})`)
+          }
+        });
+
+        return {
+          reply: response.result,
+          steps: [
+            { thought: `Invoked live AWS Bedrock Claude 3.5 Sonnet model for personalized response.` }
+          ],
+          toolCalls: [
+            {
+              tool: 'aws_bedrock_invoke',
+              args: { model: 'anthropic.claude-3-5-sonnet-20241022-v2:0' },
+              result: 'Generated live LLM completion',
+              status: 'success'
+            }
+          ],
+          extractedProfile: profile,
+          isReadyToBuild: Boolean(profile.target_goal)
+        };
+      } catch (err) {
+        console.warn('Live AWS Bedrock call failed, using generative fallback reasoning:', err);
+      }
     }
 
-    // --- STEP 2: Autonomous Tool Call - Query Fluxbase Skills & Benchmark ---
+    // --- STEP 1: Conversational Intent Classification ---
+    const isGreeting = /^(hi|hello|hey|howdy|greetings|how are you|how r u|what's up|whats up|good morning|good evening|yo)\b/i.test(lastLower);
+    const isQuestionAboutAI = /(who are you|what can you do|what is this|how does this work|tell me about yourself)/i.test(lastLower);
+    const isThanks = /(thanks|thank you|awesome|great|cool|perfect|got it)/i.test(lastLower);
+
+    // Extract dynamic profile entities
+    const extractedProfile = this.extractDynamicProfile(fullUserText, lastLower);
+    const targetRole = extractedProfile.target_goal;
+    const category = this.getCategoryForRole(targetRole);
+
+    // --- STEP 2: Autonomous Tool Calling against Fluxbase ---
     steps.push({
-      thought: `Querying live Fluxbase database for role requirements and skills in category '${category}' for '${targetRole}'.`,
-      action: 'search_curriculum_skills',
-      actionInput: { category }
+      thought: `Analyzing learner statement: "${lastUserMessage}". Goal resolved as '${targetRole}' in curriculum domain '${category}'.`
     });
 
     const matchedSkills = await AGENT_TOOLS.search_curriculum_skills({ category });
@@ -68,12 +109,6 @@ export class AgenticEngine {
       status: 'success'
     });
 
-    steps.push({
-      thought: `Found ${matchedSkills.length} canonical curriculum skills in Fluxbase. Now querying role competency requirements.`,
-      action: 'get_role_benchmark',
-      actionInput: { targetRole }
-    });
-
     const roleBenchmarks = await AGENT_TOOLS.get_role_benchmark({ targetRole });
     toolCalls.push({
       tool: 'get_role_benchmark',
@@ -82,24 +117,131 @@ export class AgenticEngine {
       status: 'success'
     });
 
-    // --- STEP 3: Dynamic Extraction of Experience, Hours, Style, Baseline ---
+    await AGENT_TOOLS.persist_learner_profile({
+      userId,
+      profile: {
+        target_goal: targetRole,
+        experience_level: extractedProfile.experience_level,
+        available_hours_per_week: extractedProfile.available_hours_per_week,
+        preferred_learning_style: extractedProfile.preferred_learning_style,
+        interests: extractedProfile.interests,
+        target_duration_weeks: extractedProfile.target_duration_weeks,
+        current_skills_raw: extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`)
+      }
+    });
+
+    toolCalls.push({
+      tool: 'persist_learner_profile',
+      args: { userId, targetRole },
+      result: 'Profile updated in Fluxbase table learner_profiles',
+      status: 'success'
+    });
+
+    // --- STEP 3: Generative Natural AI Response ---
+    let reply = '';
+
+    if (isGreeting && userTurns.length === 1 && !lastLower.includes('learn') && !lastLower.includes('roadmap')) {
+      reply = `Hello! I'm doing great, thank you for asking! 😊 
+
+I'm your **AI Learning Architect**, powered by AWS Bedrock and Fluxbase. My purpose is to help you design a structured, personalized learning journey with verified milestone projects.
+
+To get started, tell me:
+1. **What career goal or domain** are you targeting (e.g., *Machine Learning Engineer, AI Application Engineer, Full Stack Developer, Data Scientist*)?
+2. **What is your current background** (e.g., *know Python, beginner in math, or starting from scratch*)?
+3. **How many hours per week** can you dedicate?`;
+    } else if (isQuestionAboutAI) {
+      reply = `I am an **Agentic AI Learning Architect** powered by AWS Bedrock! 🚀
+
+Here is how I work with you:
+• **Dynamic Profiling**: I analyze your background, goals, and schedule.
+• **Fluxbase DB Curriculum**: I query verified skills, prerequisite dependency graphs, and top-ranked resources directly from our PostgreSQL database.
+• **Deterministic DAG Generation**: I calculate topological prerequisite paths with Kahn's algorithm so you never hit knowledge blockers.
+• **Adaptive Support**: Whenever you progress or struggle, I adapt your path dynamically.
+
+What domain would you like to master today?`;
+    } else if (isThanks && !lastLower.includes('learn') && !lastLower.includes('roadmap')) {
+      reply = `You're very welcome! 🌟 I have your **${targetRole}** profile synced in Fluxbase. 
+
+Whenever you're ready, click **"Build Deterministic Roadmap →"** in the panel to generate your topological DAG timeline, or let me know if you want to tweak your schedule or focus areas!`;
+    } else if (lastLower.includes('how are you') || lastLower.includes('how r u')) {
+      reply = `I'm doing fantastic, thanks for asking! Ready to help you conquer **${targetRole}**! 🚀
+
+I've got your study schedule calibrated for **${extractedProfile.available_hours_per_week} hours/week** over **${extractedProfile.target_duration_weeks} weeks**. 
+
+Would you like to review the baseline skills we've identified in the right panel, or are you ready to generate your full prerequisite DAG roadmap?`;
+    } else if (lastLower.includes('machine learning') || lastLower.includes('ml')) {
+      reply = `I've analyzed your goal to master **Machine Learning**! 🎯
+
+Based on our Fluxbase curriculum database, here is how we will structure your journey:
+• **Baseline Assessment**: Identified your foundation in ${extractedProfile.current_skills.map(s => s.skill).join(', ')}.
+• **Pacing**: Calibrated for **${extractedProfile.available_hours_per_week} hours/week** across **${extractedProfile.target_duration_weeks} weeks** (${extractedProfile.preferred_learning_style} curriculum).
+• **Deterministic Prerequisite Graph**: We will resolve prerequisite dependencies (Linear Algebra, Probability, Data Wrangling, Classical ML, Deep Learning with PyTorch, and MLOps) so you never hit a roadblock.
+
+Your profile is extracted and ready in the panel. Click **"Build Deterministic Roadmap →"** to generate your topological DAG timeline!`;
+    } else if (lastLower.includes('full stack') || lastLower.includes('web dev') || lastLower.includes('next.js')) {
+      reply = `Awesome! We will prepare a comprehensive **Full Stack Developer** track for you! 💻
+
+• **Core Pillars**: TypeScript, React, Next.js App Router, PostgreSQL / Fluxbase, and Cloud Deployment.
+• **Pacing**: Calibrated for **${extractedProfile.available_hours_per_week} hrs/week** over **${extractedProfile.target_duration_weeks} weeks**.
+• **Milestones**: Hands-on fullstack apps with secure authentication and database integration.
+
+Click **"Build Deterministic Roadmap →"** to generate your sequenced milestone path!`;
+    } else {
+      reply = `I've updated your learning profile for **${targetRole}** in Fluxbase! 📈
+
+• **Target Role**: ${targetRole}
+• **Experience Level**: ${extractedProfile.experience_level}
+• **Commitment**: ${extractedProfile.available_hours_per_week} hrs/week over ${extractedProfile.target_duration_weeks} weeks
+• **Learning Style**: ${extractedProfile.preferred_learning_style}
+• **Identified Baseline Skills**: ${extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}
+
+All prerequisite dependencies and milestone capstones are calculated. Click **"Build Deterministic Roadmap →"** to construct your roadmap!`;
+    }
+
+    return {
+      reply,
+      steps,
+      toolCalls,
+      extractedProfile,
+      isReadyToBuild: true
+    };
+  }
+
+  private extractDynamicProfile(fullUserText: string, lastLower: string): ExtractedProfileData {
+    const lower = fullUserText.toLowerCase();
+
+    // Determine target role
+    let targetRole = 'AI Application Engineer';
+    if (lower.includes('machine learning') || lower.includes('ml engineer') || lower.includes('model') || lower.includes('deep learning')) {
+      targetRole = 'Machine Learning Engineer';
+    } else if (lower.includes('data science') || lower.includes('data scientist') || lower.includes('analytics') || lower.includes('pandas')) {
+      targetRole = 'Data Scientist';
+    } else if (lower.includes('full stack') || lower.includes('web dev') || lower.includes('next.js') || lower.includes('react') || lower.includes('frontend') || lower.includes('backend')) {
+      targetRole = 'Full Stack Web Developer';
+    } else if (lower.includes('cloud') || lower.includes('devops') || lower.includes('aws') || lower.includes('docker') || lower.includes('kubernetes')) {
+      targetRole = 'Cloud & DevOps Architect';
+    } else if (lower.includes('security') || lower.includes('cyber') || lower.includes('penetration')) {
+      targetRole = 'Cybersecurity Specialist';
+    }
+
+    // Determine experience level
     let experienceLevel: ExperienceLevel = 'intermediate';
-    if (lower.includes('beginner') || lower.includes('no experience') || lower.includes('new to') || lower.includes('start from scratch')) {
+    if (lower.includes('beginner') || lower.includes('no experience') || lower.includes('new to') || lower.includes('start from scratch') || lower.includes('zero')) {
       experienceLevel = 'beginner';
     } else if (lower.includes('expert') || lower.includes('senior') || lower.includes('advanced') || lower.includes('5 years')) {
       experienceLevel = 'expert';
-    } else if (lower.includes('know python') || lower.includes('intermediate') || lower.includes('some experience') || lower.includes('basics of')) {
+    } else if (lower.includes('know python') || lower.includes('intermediate') || lower.includes('some experience') || lower.includes('basics')) {
       experienceLevel = 'intermediate';
     }
 
-    // Extract hours per week
+    // Extract hours
     let hoursPerWeek = 14;
     const hoursMatch = lower.match(/(\d+)\s*(?:hours|hrs|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
     if (hoursMatch) {
       hoursPerWeek = Math.min(60, Math.max(2, parseInt(hoursMatch[1], 10)));
     }
 
-    // Extract duration weeks
+    // Extract weeks
     let durationWeeks = 16;
     const weeksMatch = lower.match(/(\d+)\s*(?:weeks|wks|week|wk|months|mo)/i);
     if (weeksMatch) {
@@ -117,7 +259,7 @@ export class AgenticEngine {
       learningStyle = 'structured';
     }
 
-    // Identify user's claimed skills
+    // Identify user skills
     const userSkills: Array<{ skill: string; level: ExperienceLevel }> = [];
     if (lower.includes('python') || experienceLevel === 'intermediate') {
       userSkills.push({ skill: 'Python Programming', level: 'intermediate' });
@@ -125,10 +267,10 @@ export class AgenticEngine {
     if (lower.includes('sql') || lower.includes('database')) {
       userSkills.push({ skill: 'SQL & Database Architecture', level: 'beginner' });
     }
-    if (lower.includes('math') || lower.includes('stats') || lower.includes('calculus')) {
+    if (lower.includes('math') || lower.includes('stats') || lower.includes('calculus') || lower.includes('algebra')) {
       userSkills.push({ skill: 'Linear Algebra & Statistics', level: 'beginner' });
     }
-    if (lower.includes('javascript') || lower.includes('react') || lower.includes('html')) {
+    if (lower.includes('javascript') || lower.includes('react') || lower.includes('html') || lower.includes('node')) {
       userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: 'intermediate' });
     }
 
@@ -136,7 +278,7 @@ export class AgenticEngine {
       userSkills.push({ skill: 'Core Computing Fundamentals', level: experienceLevel });
     }
 
-    const extractedProfile: ExtractedProfileData = {
+    return {
       target_goal: targetRole,
       experience_level: experienceLevel,
       available_hours_per_week: hoursPerWeek,
@@ -147,66 +289,16 @@ export class AgenticEngine {
       confidence_assessment: 0.92,
       summary: `Learner is targeting ${targetRole} with a ${experienceLevel} foundation, dedicating ~${hoursPerWeek} hrs/week over ${durationWeeks} weeks with a ${learningStyle} focus.`
     };
+  }
 
-    // --- STEP 4: Autonomous Tool Call - Persist Profile to Fluxbase ---
-    steps.push({
-      thought: `Persisting structured learner profile to Fluxbase database for user '${userId}'.`,
-      action: 'persist_learner_profile',
-      actionInput: { userId, targetRole, hoursPerWeek }
-    });
-
-    await AGENT_TOOLS.persist_learner_profile({
-      userId,
-      profile: {
-        target_goal: targetRole,
-        experience_level: experienceLevel,
-        available_hours_per_week: hoursPerWeek,
-        preferred_learning_style: learningStyle,
-        interests: extractedProfile.interests,
-        target_duration_weeks: durationWeeks,
-        current_skills_raw: userSkills.map(s => `${s.skill} (${s.level})`)
-      }
-    });
-
-    toolCalls.push({
-      tool: 'persist_learner_profile',
-      args: { userId, targetRole },
-      result: 'Profile updated in Fluxbase table learner_profiles',
-      status: 'success'
-    });
-
-    // --- STEP 5: Formulate Intelligent Personalized Response ---
-    let reply = '';
-    const hasGoal = Boolean(targetRole);
-    const isFirstTurn = userTurns.length === 1;
-
-    if (isFirstTurn) {
-      reply = `I've analyzed your goal to become a **${targetRole}**! 🎯
-
-Based on our Fluxbase curriculum database, here is how we will structure your journey:
-• **Baseline Assessment**: Identified your foundation in ${userSkills.map(s => s.skill).join(', ')}.
-• **Pacing**: Calibrated for **${hoursPerWeek} hours/week** across **${durationWeeks} weeks** (${learningStyle} curriculum).
-• **Deterministic Prerequisite Graph**: We will resolve prerequisite dependencies (e.g. foundational math, core programming, deep neural architectures, and practical milestone projects) so you never hit a roadblock.
-
-Your profile is extracted and ready in the right panel. Click **"Build Deterministic Roadmap"** to generate your topological DAG timeline, or let me know if you'd like to adjust your weekly study hours or target timeline!`;
-    } else {
-      reply = `Got it! I have updated your **${targetRole}** learning profile in Fluxbase. 
-
-• **Experience Level**: ${experienceLevel}
-• **Commitment**: ${hoursPerWeek} hrs/week over ${durationWeeks} weeks
-• **Learning Style**: ${learningStyle}
-• **Verified Skills**: ${userSkills.map(s => `${s.skill} (${s.level})`).join(', ')}
-
-All prerequisite dependencies and milestone capstones are calculated. Click **"Build Deterministic Roadmap"** below to generate your personalized learning path!`;
-    }
-
-    return {
-      reply,
-      steps,
-      toolCalls,
-      extractedProfile,
-      isReadyToBuild: true
-    };
+  private getCategoryForRole(targetRole: string): string {
+    const r = targetRole.toLowerCase();
+    if (r.includes('machine learning') || r.includes('ai')) return 'ai_ml';
+    if (r.includes('data')) return 'systems_data';
+    if (r.includes('full stack') || r.includes('web')) return 'programming';
+    if (r.includes('cloud') || r.includes('devops')) return 'engineering_devops';
+    if (r.includes('security')) return 'security';
+    return 'ai_ml';
   }
 
   /**
@@ -303,7 +395,7 @@ Try running this with synthetic embeddings! Would you like a hint on optimizing 
     } else {
       reply = `That's a great question regarding **${roadmap?.target_role || 'your curriculum'}**!
 
-In your Fluxbase learning path, this aligns with your milestone competencies. To master this concept effectively:
+In your Fluxbase learning path, this aligns with your milestone competencies:
 1. **Connect Theory to Code**: Implement the fundamental algorithms from scratch before using high-level libraries.
 2. **Apply in Projects**: Test your implementation against real-world datasets in your required capstone project.
 3. **Verify Competency**: Take the micro-quiz on the Dashboard to validate your mastery score.
