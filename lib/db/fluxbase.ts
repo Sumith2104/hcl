@@ -11,7 +11,8 @@ import {
   AsyncJob,
   LLMUsageLog,
   AdaptationHistory,
-  AssessmentQuiz
+  AssessmentQuiz,
+  ChatMessage
 } from './schema';
 import {
   SEED_SKILLS,
@@ -458,7 +459,89 @@ class FluxbaseService {
   public async getQuizForSkill(skillId: string): Promise<AssessmentQuiz | null> {
     return this.quizzes.get(skillId) || null;
   }
+
+  private chatMessages: ChatMessage[] = [];
+
+  // --- Chat Messages & Context Memory ---
+  public async saveChatMessage(params: {
+    userId: string;
+    conversationId: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    metadata?: Record<string, any>;
+  }): Promise<ChatMessage> {
+    const id = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const now = new Date().toISOString();
+
+    const message: ChatMessage = {
+      id,
+      user_id: params.userId,
+      conversation_id: params.conversationId,
+      role: params.role,
+      content: params.content,
+      metadata: params.metadata || {},
+      created_at: now
+    };
+
+    this.chatMessages.push(message);
+
+    await this.executeSql(
+      `INSERT INTO chat_messages (id, user_id, conversation_id, role, content, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW());`,
+      [
+        message.id,
+        message.user_id,
+        message.conversation_id,
+        message.role,
+        message.content,
+        JSON.stringify(message.metadata || {})
+      ]
+    );
+
+    return message;
+  }
+
+  public async getChatHistory(userId: string, conversationId: string, limit: number = 50): Promise<ChatMessage[]> {
+    const res = await this.executeSql<any>(
+      `SELECT id, user_id, conversation_id, role, content, metadata, created_at
+       FROM chat_messages
+       WHERE user_id = $1 AND conversation_id = $2
+       ORDER BY created_at ASC
+       LIMIT $3;`,
+      [userId, conversationId, limit]
+    );
+
+    if (res.success && res.rows && res.rows.length > 0) {
+      return res.rows.map((row: any) => ({
+        id: row.id,
+        user_id: row.user_id,
+        conversation_id: row.conversation_id,
+        role: row.role as any,
+        content: row.content,
+        metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata) : (row.metadata || {}),
+        created_at: row.created_at
+      }));
+    }
+
+    // Return in-memory cached messages for this conversation if remote returns empty
+    return this.chatMessages.filter(
+      m => m.user_id === userId && m.conversation_id === conversationId
+    );
+  }
+
+  public async clearChatHistory(userId: string, conversationId: string): Promise<boolean> {
+    this.chatMessages = this.chatMessages.filter(
+      m => !(m.user_id === userId && m.conversation_id === conversationId)
+    );
+
+    const res = await this.executeSql(
+      `DELETE FROM chat_messages WHERE user_id = $1 AND conversation_id = $2;`,
+      [userId, conversationId]
+    );
+    return res.success;
+  }
 }
 
 // Singleton instance for Fluxbase service
 export const fluxbase = new FluxbaseService();
+

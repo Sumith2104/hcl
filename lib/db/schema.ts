@@ -186,3 +186,14 @@ export interface AdaptationHistory {
   previous_item_count: number;
   new_item_count: number;
 }
+
+export interface ChatMessage {
+  id: string;
+  user_id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+

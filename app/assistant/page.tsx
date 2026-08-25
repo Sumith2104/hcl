@@ -59,6 +59,29 @@ export default function AssistantPage() {
     scrollToBottom();
   }, [messages, loading]);
 
+  useEffect(() => {
+    const loadMentorHistory = async () => {
+      try {
+        const res = await fetch(`/api/chat?userId=${activeUserId}`);
+        const data = await res.json();
+        if (data.success && data.messages && data.messages.length > 0) {
+          setMessages(data.messages.map((m: any, idx: number) => ({
+            id: `msg_hist_${idx}`,
+            role: m.role,
+            content: m.content,
+            timestamp: m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            model: DEFAULT_BEDROCK_MODEL,
+            provider: 'aws_bedrock'
+          })));
+        }
+      } catch (err) {
+        console.warn('Could not load mentor chat history:', err);
+      }
+    };
+
+    loadMentorHistory();
+  }, [activeUserId]);
+
   const quickPrompts = [
     'What should I study today based on my active milestone?',
     'Why is Linear Algebra a required prerequisite for Deep Learning?',

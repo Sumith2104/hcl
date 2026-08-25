@@ -82,6 +82,43 @@ To construct your personalized, deterministic prerequisite learning path, tell m
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
+  // Load chat history from Fluxbase database on initial mount
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(`/api/onboarding/chat?userId=${activeUserId}`);
+        const data = await res.json();
+        if (data.success && data.messages && data.messages.length > 0) {
+          setMessages(data.messages);
+          const lastAssistant = data.messages.filter((m: any) => m.role === 'assistant').pop();
+          if (lastAssistant?.metadata?.extractedProfile) {
+            setExtractedProfile(lastAssistant.metadata.extractedProfile);
+          }
+        }
+        if (data.profile && !extractedProfile) {
+          setExtractedProfile({
+            target_goal: data.profile.target_goal,
+            experience_level: data.profile.experience_level,
+            available_hours_per_week: data.profile.available_hours_per_week,
+            target_duration_weeks: data.profile.target_duration_weeks,
+            preferred_learning_style: data.profile.preferred_learning_style,
+            interests: data.profile.interests || [],
+            current_skills: (data.profile.current_skills_raw || []).map((s: string) => {
+              const [skill, level] = s.split(' (');
+              return { skill, level: (level?.replace(')', '') as any) || 'intermediate' };
+            }),
+            confidence_assessment: 0.95,
+            summary: `Calibrated track for ${data.profile.target_goal}.`
+          });
+        }
+      } catch (err) {
+        console.warn('Could not load chat history from DB:', err);
+      }
+    };
+
+    loadHistory();
+  }, [activeUserId]);
+
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend || input.trim();
     if (!text || loading || generating) return;
@@ -118,7 +155,7 @@ To construct your personalized, deterministic prerequisite learning path, tell m
         setAgentSteps(chatData.steps);
       }
     } catch (err) {
-      console.error('Error in onboarding turn:', err);
+      console.error('Error in agentic turn:', err);
     } finally {
       setLoading(false);
     }
@@ -168,7 +205,11 @@ To construct your personalized, deterministic prerequisite learning path, tell m
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    try {
+      await fetch(`/api/onboarding/chat?userId=${activeUserId}`, { method: 'DELETE' });
+    } catch (e) {}
+
     setMessages([
       {
         role: 'assistant',
