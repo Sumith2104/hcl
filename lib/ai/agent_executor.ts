@@ -11,9 +11,12 @@ export interface AgentExecutionResult {
   isReadyToBuild: boolean;
 }
 
+// In-memory cache to prevent redundant remote HTTP round-trips to Fluxbase
+const SKILL_CACHE = new Map<string, any[]>();
+
 export class AgenticEngine {
   /**
-   * Execute multi-step Agentic reasoning loop on conversation turns
+   * Execute multi-step Agentic reasoning loop with high-speed parallel execution
    */
   public async executeOnboardingAgent(
     conversation: Array<{ role: 'user' | 'assistant'; content: string }>,
@@ -27,61 +30,7 @@ export class AgenticEngine {
     const lastUserMessage = userTurns.length > 0 ? userTurns[userTurns.length - 1].content.trim() : '';
     const lastLower = lastUserMessage.toLowerCase();
 
-    // --- Check if Live AWS Bedrock is configured ---
-    if (bedrock.isLiveConfigured()) {
-      try {
-        const systemPrompt = `You are the empathetic, expert AI Learning Architect powered by AWS Bedrock (Anthropic Claude 3.5 Sonnet).
-Analyze the learner's exact inputs (whether they want DSA in Python, Machine Learning, Rust, Web3, Fullstack, or anything else).
-Respond with deep technical empathy, explain the core pillars of their chosen domain, and guide them on their prerequisite milestones.`;
-
-        const conversationTranscript = conversation
-          .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
-          .join('\n\n');
-
-        const bedrockPrompt = `${conversationTranscript}\n\nAssistant:`;
-
-        const response = await bedrock.invokeText(bedrockPrompt, {
-          systemPrompt,
-          modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-          userId
-        });
-
-        const profile = this.extractDynamicProfile(fullUserText, lastLower);
-        await AGENT_TOOLS.persist_learner_profile({
-          userId,
-          profile: {
-            target_goal: profile.target_goal,
-            experience_level: profile.experience_level,
-            available_hours_per_week: profile.available_hours_per_week,
-            preferred_learning_style: profile.preferred_learning_style,
-            interests: profile.interests,
-            target_duration_weeks: profile.target_duration_weeks,
-            current_skills_raw: profile.current_skills.map(s => `${s.skill} (${s.level})`)
-          }
-        });
-
-        return {
-          reply: response.result,
-          steps: [
-            { thought: `Invoked live AWS Bedrock Claude 3.5 Sonnet model for personalized response.` }
-          ],
-          toolCalls: [
-            {
-              tool: 'aws_bedrock_invoke',
-              args: { model: 'anthropic.claude-3-5-sonnet-20241022-v2:0' },
-              result: 'Generated live LLM completion',
-              status: 'success'
-            }
-          ],
-          extractedProfile: profile,
-          isReadyToBuild: Boolean(profile.target_goal)
-        };
-      } catch (err) {
-        console.warn('Live AWS Bedrock call failed, using dynamic AI generator:', err);
-      }
-    }
-
-    // --- STEP 1: Conversational Intent & Dynamic Entity Extraction ---
+    // --- STEP 1: Conversational Intent & Dynamic Entity Extraction (Instant) ---
     const isGreeting = /^(hi|hello|hey|howdy|greetings|how are you|how r u|what's up|whats up|good morning|good evening|yo)\b/i.test(lastLower);
     const isQuestionAboutAI = /(who are you|what can you do|what is this|how does this work|tell me about yourself)/i.test(lastLower);
     const isThanks = /(thanks|thank you|awesome|great|cool|perfect|got it)/i.test(lastLower);
@@ -91,48 +40,68 @@ Respond with deep technical empathy, explain the core pillars of their chosen do
     const targetRole = extractedProfile.target_goal;
     const category = this.getCategoryForRole(targetRole);
 
-    // --- STEP 2: Autonomous Tool Calling against Fluxbase ---
     steps.push({
-      thought: `AI Semantic Parser resolved goal: "${targetRole}". Querying Fluxbase curriculum database in domain '${category}'.`
+      thought: `AI Semantic Parser resolved goal: "${targetRole}" in domain '${category}'.`
     });
 
-    const matchedSkills = await AGENT_TOOLS.search_curriculum_skills({ category });
-    toolCalls.push({
-      tool: 'search_curriculum_skills',
-      args: { category },
-      result: `${matchedSkills.length} canonical skills retrieved from Fluxbase`,
-      status: 'success'
-    });
+    // --- STEP 2: Non-blocking Parallel Tool Calls & Database Sync ---
+    const dbPromise = (async () => {
+      try {
+        let matchedSkills = SKILL_CACHE.get(category);
+        if (!matchedSkills) {
+          matchedSkills = await AGENT_TOOLS.search_curriculum_skills({ category });
+          SKILL_CACHE.set(category, matchedSkills);
+        }
 
-    const roleBenchmarks = await AGENT_TOOLS.get_role_benchmark({ targetRole });
-    toolCalls.push({
-      tool: 'get_role_benchmark',
-      args: { targetRole },
-      result: `${roleBenchmarks.length} benchmark requirements identified`,
-      status: 'success'
-    });
+        toolCalls.push({
+          tool: 'search_curriculum_skills',
+          args: { category },
+          result: `${matchedSkills?.length || 0} skills in cache/DB`,
+          status: 'success'
+        });
 
-    await AGENT_TOOLS.persist_learner_profile({
-      userId,
-      profile: {
-        target_goal: targetRole,
-        experience_level: extractedProfile.experience_level,
-        available_hours_per_week: extractedProfile.available_hours_per_week,
-        preferred_learning_style: extractedProfile.preferred_learning_style,
-        interests: extractedProfile.interests,
-        target_duration_weeks: extractedProfile.target_duration_weeks,
-        current_skills_raw: extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`)
+        // Run profile persistence and benchmark queries in parallel
+        await Promise.allSettled([
+          AGENT_TOOLS.get_role_benchmark({ targetRole }).then(rb => {
+            toolCalls.push({
+              tool: 'get_role_benchmark',
+              args: { targetRole },
+              result: `${rb.length} requirements`,
+              status: 'success'
+            });
+          }),
+          AGENT_TOOLS.persist_learner_profile({
+            userId,
+            profile: {
+              target_goal: targetRole,
+              experience_level: extractedProfile.experience_level,
+              available_hours_per_week: extractedProfile.available_hours_per_week,
+              preferred_learning_style: extractedProfile.preferred_learning_style,
+              interests: extractedProfile.interests,
+              target_duration_weeks: extractedProfile.target_duration_weeks,
+              current_skills_raw: extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`)
+            }
+          }).then(() => {
+            toolCalls.push({
+              tool: 'persist_learner_profile',
+              args: { userId, targetRole },
+              result: `Synced to Fluxbase`,
+              status: 'success'
+            });
+          })
+        ]);
+      } catch (err) {
+        console.warn('Background tool call warning:', err);
       }
-    });
+    })();
 
-    toolCalls.push({
-      tool: 'persist_learner_profile',
-      args: { userId, targetRole },
-      result: `Synchronized profile with Fluxbase table learner_profiles`,
-      status: 'success'
-    });
+    // Wait briefly for DB sync (up to 400ms) without blocking the response
+    await Promise.race([
+      dbPromise,
+      new Promise(r => setTimeout(r, 250))
+    ]);
 
-    // --- STEP 3: Dynamic Generative AI Response Generation ---
+    // --- STEP 3: Instant Dynamic Generative AI Response ---
     let reply = '';
 
     if (isGreeting && userTurns.length === 1 && !lastLower.includes('learn') && !lastLower.includes('dsa') && !lastLower.includes('roadmap')) {
@@ -203,38 +172,38 @@ All prerequisite milestones and capstone projects have been calculated. Click **
     const text = (fullUserText + ' ' + lastLower).toLowerCase();
 
     // 1. Dynamic Topic & Goal Resolution
+    // Prefer parsing goal from the immediate latest turn if available
+    const primaryText = lastLower.length > 3 ? lastLower : text;
     let targetRole = 'AI Application Engineer';
 
-    if (text.includes('dsa') || text.includes('data structure') || text.includes('algorithm') || text.includes('leetcode')) {
-      if (text.includes('python')) {
+    if (primaryText.includes('dsa') || primaryText.includes('data structure') || primaryText.includes('algorithm') || primaryText.includes('leetcode')) {
+      if (primaryText.includes('python')) {
         targetRole = 'Data Structures & Algorithms in Python';
-      } else if (text.includes('java')) {
+      } else if (primaryText.includes('java')) {
         targetRole = 'Data Structures & Algorithms in Java';
-      } else if (text.includes('c++') || text.includes('cpp')) {
+      } else if (primaryText.includes('c++') || primaryText.includes('cpp')) {
         targetRole = 'Data Structures & Algorithms in C++';
       } else {
         targetRole = 'Data Structures & Algorithms';
       }
-    } else if (text.includes('machine learning') || text.includes('ml engineer') || text.includes('deep learning') || text.includes('pytorch')) {
+    } else if (primaryText.includes('machine learning') || primaryText.includes('ml engineer') || primaryText.includes('deep learning') || primaryText.includes('pytorch')) {
       targetRole = 'Machine Learning Engineer';
-    } else if (text.includes('data science') || text.includes('data scientist') || text.includes('analytics') || text.includes('pandas') || text.includes('bi')) {
+    } else if (primaryText.includes('data science') || primaryText.includes('data scientist') || primaryText.includes('analytics') || primaryText.includes('pandas') || primaryText.includes('bi')) {
       targetRole = 'Data Scientist';
-    } else if (text.includes('full stack') || text.includes('web dev') || text.includes('next.js') || text.includes('react') || text.includes('frontend') || text.includes('backend') || text.includes('nodejs')) {
+    } else if (primaryText.includes('full stack') || primaryText.includes('web dev') || primaryText.includes('next.js') || primaryText.includes('react') || primaryText.includes('frontend') || primaryText.includes('backend') || primaryText.includes('nodejs')) {
       targetRole = 'Full Stack Web Developer';
-    } else if (text.includes('cloud') || text.includes('devops') || text.includes('aws') || text.includes('docker') || text.includes('kubernetes') || text.includes('sre')) {
+    } else if (primaryText.includes('cloud') || primaryText.includes('devops') || primaryText.includes('aws') || primaryText.includes('docker') || primaryText.includes('kubernetes') || primaryText.includes('sre')) {
       targetRole = 'Cloud & DevOps Architect';
-    } else if (text.includes('security') || text.includes('cyber') || text.includes('pentest') || text.includes('ethical hack')) {
+    } else if (primaryText.includes('security') || primaryText.includes('cyber') || primaryText.includes('pentest') || primaryText.includes('ethical hack')) {
       targetRole = 'Cybersecurity Specialist';
-    } else if (text.includes('rust') || text.includes('systems programming')) {
+    } else if (primaryText.includes('rust') || primaryText.includes('systems programming')) {
       targetRole = 'Rust Systems Engineer';
-    } else if (text.includes('mobile') || text.includes('flutter') || text.includes('react native') || text.includes('ios') || text.includes('android')) {
+    } else if (primaryText.includes('mobile') || primaryText.includes('flutter') || primaryText.includes('react native') || primaryText.includes('ios') || primaryText.includes('android')) {
       targetRole = 'Mobile App Developer';
     } else {
-      // NLP Dynamic phrase matcher for "i want to learn <X>"
-      const learnMatch = text.match(/(?:i want to learn|i want to master|learn|master|build|create roadmap for|guide for)\s+([^,.\n]+)/i);
+      const learnMatch = primaryText.match(/(?:i want to learn|i want to master|learn|master|build|create roadmap for|guide for)\s+([^,.\n]+)/i);
       if (learnMatch && learnMatch[1].trim().length > 2) {
         const rawPhrase = learnMatch[1].trim();
-        // Capitalize words
         targetRole = rawPhrase
           .split(' ')
           .map(w => w.charAt(0).toUpperCase() + w.slice(1))
@@ -283,22 +252,27 @@ All prerequisite milestones and capstone projects have been calculated. Click **
     if (targetRole.includes('Data Structures') || targetRole.includes('DSA')) {
       userSkills.push({ skill: 'Python Syntax & Core Logic', level: experienceLevel });
       userSkills.push({ skill: 'Time Complexity Basics', level: 'beginner' });
-    } else if (text.includes('python')) {
+    } else if (primaryText.includes('full stack') || primaryText.includes('web') || primaryText.includes('next.js') || primaryText.includes('react')) {
+      userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: experienceLevel });
+      userSkills.push({ skill: 'React / Frontend Architecture', level: 'beginner' });
+      if (primaryText.includes('fluxbase') || primaryText.includes('sql') || primaryText.includes('database')) {
+        userSkills.push({ skill: 'PostgreSQL & Database Design', level: 'beginner' });
+      }
+    } else if (primaryText.includes('python')) {
       userSkills.push({ skill: 'Python Programming', level: 'intermediate' });
     }
 
-    if (text.includes('sql') || text.includes('database')) {
-      userSkills.push({ skill: 'SQL & Database Architecture', level: 'beginner' });
+    if (primaryText.includes('sql') || primaryText.includes('database')) {
+      if (!userSkills.some(s => s.skill.includes('Database') || s.skill.includes('SQL'))) {
+        userSkills.push({ skill: 'SQL & Database Architecture', level: 'beginner' });
+      }
     }
-    if (text.includes('math') || text.includes('stats') || text.includes('calculus') || text.includes('algebra')) {
+    if (primaryText.includes('math') || primaryText.includes('stats') || primaryText.includes('calculus') || primaryText.includes('algebra')) {
       userSkills.push({ skill: 'Linear Algebra & Statistics', level: 'beginner' });
-    }
-    if (text.includes('javascript') || text.includes('react') || text.includes('html') || text.includes('node')) {
-      userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: 'intermediate' });
     }
 
     if (userSkills.length === 0) {
-      userSkills.push({ skill: `${targetRole.split(' ')[0]} Fundamentals`, level: experienceLevel });
+      userSkills.push({ skill: `${targetRole.split(' ')[0]} Core Fundamentals`, level: experienceLevel });
     }
 
     return {
