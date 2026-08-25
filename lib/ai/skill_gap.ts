@@ -42,7 +42,13 @@ export class SkillGapEngine {
     targetRole: string,
     userSkills: UserSkillAssessment[]
   ): Promise<SkillGapAnalysisResult> {
-    const roleRequirements = await fluxbase.getRoleRequirements(targetRole);
+    let roleRequirements = await fluxbase.getRoleRequirements(targetRole);
+
+    // If role requirements are not found in DB for this custom role, dynamically synthesize a specialized competency matrix
+    if (roleRequirements.length === 0) {
+      roleRequirements = await this.synthesizeRoleRequirements(targetRole);
+    }
+
     const allSkills = await fluxbase.getAllSkills();
     const skillMap = new Map<string, Skill>(allSkills.map(s => [s.id, s]));
 
@@ -56,8 +62,8 @@ export class SkillGapEngine {
 
     for (const req of roleRequirements) {
       const skill = skillMap.get(req.skill_id);
-      const skillName = skill ? skill.name : req.skill_id;
-      const category = skill ? skill.category : 'ai_ml';
+      const skillName = skill ? skill.name : this.formatSkillName(req.skill_id);
+      const category = skill ? skill.category : 'programming';
       const userSkill = userSkillMap.get(req.skill_id);
       const currentLevel = userSkill ? userSkill.currentLevel : 'none';
 
@@ -98,20 +104,56 @@ export class SkillGapEngine {
       return a.sequenceWeight - b.sequenceWeight;
     });
 
-    const totalRequired = roleRequirements.length;
+    const total = roleRequirements.length;
     const satisfied = knownSkills.length;
     const gapCount = gapSkills.length;
-    const gapPercentage = totalRequired > 0 ? Math.round((gapCount / totalRequired) * 100) : 0;
+    const gapPct = total > 0 ? Math.round((gapCount / total) * 100) : 0;
 
     return {
       targetRole,
-      totalRequiredSkills: totalRequired,
+      totalRequiredSkills: total,
       satisfiedSkillsCount: satisfied,
       gapSkillsCount: gapCount,
-      gapPercentage,
+      gapPercentage: gapPct,
       knownSkills,
       gapSkills
     };
+  }
+
+  private async synthesizeRoleRequirements(targetRole: string): Promise<RoleSkillRequirement[]> {
+    const rLower = targetRole.toLowerCase();
+
+    if (rLower.includes('dsa') || rLower.includes('data structure') || rLower.includes('algorithm')) {
+      return [
+        { id: `req_dsa_1`, target_role: targetRole, skill_id: 'prog_python', required_level: 'intermediate', importance: 'must_have', sequence_weight: 1 },
+        { id: `req_dsa_2`, target_role: targetRole, skill_id: 'dsa_time_complexity', required_level: 'intermediate', importance: 'must_have', sequence_weight: 2 },
+        { id: `req_dsa_3`, target_role: targetRole, skill_id: 'dsa_arrays_hashing', required_level: 'advanced', importance: 'must_have', sequence_weight: 3 },
+        { id: `req_dsa_4`, target_role: targetRole, skill_id: 'dsa_two_pointers_sliding', required_level: 'advanced', importance: 'must_have', sequence_weight: 4 },
+        { id: `req_dsa_5`, target_role: targetRole, skill_id: 'dsa_linked_lists_stacks', required_level: 'intermediate', importance: 'core', sequence_weight: 5 },
+        { id: `req_dsa_6`, target_role: targetRole, skill_id: 'dsa_binary_trees_bst', required_level: 'advanced', importance: 'must_have', sequence_weight: 6 },
+        { id: `req_dsa_7`, target_role: targetRole, skill_id: 'dsa_heaps_priority_queues', required_level: 'intermediate', importance: 'core', sequence_weight: 7 },
+        { id: `req_dsa_8`, target_role: targetRole, skill_id: 'dsa_graph_algorithms', required_level: 'advanced', importance: 'must_have', sequence_weight: 8 },
+        { id: `req_dsa_9`, target_role: targetRole, skill_id: 'dsa_dynamic_programming', required_level: 'advanced', importance: 'must_have', sequence_weight: 9 }
+      ];
+    }
+
+    // Default dynamic requirements for arbitrary custom role
+    const basePrefix = targetRole.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 8);
+    return [
+      { id: `req_${basePrefix}_1`, target_role: targetRole, skill_id: 'prog_python', required_level: 'intermediate', importance: 'must_have', sequence_weight: 1 },
+      { id: `req_${basePrefix}_2`, target_role: targetRole, skill_id: `${basePrefix}_foundations`, required_level: 'intermediate', importance: 'must_have', sequence_weight: 2 },
+      { id: `req_${basePrefix}_3`, target_role: targetRole, skill_id: `${basePrefix}_core_architecture`, required_level: 'advanced', importance: 'must_have', sequence_weight: 3 },
+      { id: `req_${basePrefix}_4`, target_role: targetRole, skill_id: `${basePrefix}_advanced_patterns`, required_level: 'advanced', importance: 'core', sequence_weight: 4 },
+      { id: `req_${basePrefix}_5`, target_role: targetRole, skill_id: `${basePrefix}_production_capstone`, required_level: 'expert', importance: 'must_have', sequence_weight: 5 }
+    ];
+  }
+
+  private formatSkillName(skillId: string): string {
+    return skillId
+      .replace(/^(dsa_|prog_|sys_|ai_|req_)/, '')
+      .split('_')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
   }
 }
 

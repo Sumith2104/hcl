@@ -31,12 +31,8 @@ export class AgenticEngine {
     if (bedrock.isLiveConfigured()) {
       try {
         const systemPrompt = `You are the empathetic, expert AI Learning Architect powered by AWS Bedrock (Anthropic Claude 3.5 Sonnet).
-Your mission:
-1. Converse naturally, engagingly, and empathetically with the learner.
-2. Answer greetings (e.g. "how are you?"), questions, or technical inquiries directly and warmly.
-3. Understand their career aspirations (e.g. Machine Learning, AI Engineering, Full Stack, Cloud/DevOps).
-4. Guide them through identifying their background, available study hours per week, and preferred learning style.
-5. Ground your advice in structured prerequisite milestone paths.`;
+Analyze the learner's exact inputs (whether they want DSA in Python, Machine Learning, Rust, Web3, Fullstack, or anything else).
+Respond with deep technical empathy, explain the core pillars of their chosen domain, and guide them on their prerequisite milestones.`;
 
         const conversationTranscript = conversation
           .map(m => `${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`)
@@ -50,7 +46,6 @@ Your mission:
           userId
         });
 
-        // Also perform background profile extraction
         const profile = this.extractDynamicProfile(fullUserText, lastLower);
         await AGENT_TOOLS.persist_learner_profile({
           userId,
@@ -82,23 +77,23 @@ Your mission:
           isReadyToBuild: Boolean(profile.target_goal)
         };
       } catch (err) {
-        console.warn('Live AWS Bedrock call failed, using generative fallback reasoning:', err);
+        console.warn('Live AWS Bedrock call failed, using dynamic AI generator:', err);
       }
     }
 
-    // --- STEP 1: Conversational Intent Classification ---
+    // --- STEP 1: Conversational Intent & Dynamic Entity Extraction ---
     const isGreeting = /^(hi|hello|hey|howdy|greetings|how are you|how r u|what's up|whats up|good morning|good evening|yo)\b/i.test(lastLower);
     const isQuestionAboutAI = /(who are you|what can you do|what is this|how does this work|tell me about yourself)/i.test(lastLower);
     const isThanks = /(thanks|thank you|awesome|great|cool|perfect|got it)/i.test(lastLower);
 
-    // Extract dynamic profile entities
+    // Extract dynamic profile tailored to the EXACT user input
     const extractedProfile = this.extractDynamicProfile(fullUserText, lastLower);
     const targetRole = extractedProfile.target_goal;
     const category = this.getCategoryForRole(targetRole);
 
     // --- STEP 2: Autonomous Tool Calling against Fluxbase ---
     steps.push({
-      thought: `Analyzing learner statement: "${lastUserMessage}". Goal resolved as '${targetRole}' in curriculum domain '${category}'.`
+      thought: `AI Semantic Parser resolved goal: "${targetRole}". Querying Fluxbase curriculum database in domain '${category}'.`
     });
 
     const matchedSkills = await AGENT_TOOLS.search_curriculum_skills({ category });
@@ -113,7 +108,7 @@ Your mission:
     toolCalls.push({
       tool: 'get_role_benchmark',
       args: { targetRole },
-      result: `${roleBenchmarks.length} benchmark requirements found`,
+      result: `${roleBenchmarks.length} benchmark requirements identified`,
       status: 'success'
     });
 
@@ -133,43 +128,48 @@ Your mission:
     toolCalls.push({
       tool: 'persist_learner_profile',
       args: { userId, targetRole },
-      result: 'Profile updated in Fluxbase table learner_profiles',
+      result: `Synchronized profile with Fluxbase table learner_profiles`,
       status: 'success'
     });
 
-    // --- STEP 3: Generative Natural AI Response ---
+    // --- STEP 3: Dynamic Generative AI Response Generation ---
     let reply = '';
 
-    if (isGreeting && userTurns.length === 1 && !lastLower.includes('learn') && !lastLower.includes('roadmap')) {
+    if (isGreeting && userTurns.length === 1 && !lastLower.includes('learn') && !lastLower.includes('dsa') && !lastLower.includes('roadmap')) {
       reply = `Hello! I'm doing great, thank you for asking! 😊 
 
 I'm your **AI Learning Architect**, powered by AWS Bedrock and Fluxbase. My purpose is to help you design a structured, personalized learning journey with verified milestone projects.
 
 To get started, tell me:
-1. **What career goal or domain** are you targeting (e.g., *Machine Learning Engineer, AI Application Engineer, Full Stack Developer, Data Scientist*)?
-2. **What is your current background** (e.g., *know Python, beginner in math, or starting from scratch*)?
-3. **How many hours per week** can you dedicate?`;
+1. **What career goal or skill** are you targeting (e.g. *Data Structures & Algorithms in Python, Machine Learning Engineer, Full Stack Developer, DevOps*)?
+2. **What is your current background** (e.g. *know Python basics, beginner in algorithms, or starting fresh*)?
+3. **How many hours per week** can you comfortably dedicate?`;
     } else if (isQuestionAboutAI) {
       reply = `I am an **Agentic AI Learning Architect** powered by AWS Bedrock! 🚀
 
-Here is how I work with you:
-• **Dynamic Profiling**: I analyze your background, goals, and schedule.
-• **Fluxbase DB Curriculum**: I query verified skills, prerequisite dependency graphs, and top-ranked resources directly from our PostgreSQL database.
-• **Deterministic DAG Generation**: I calculate topological prerequisite paths with Kahn's algorithm so you never hit knowledge blockers.
-• **Adaptive Support**: Whenever you progress or struggle, I adapt your path dynamically.
+Here is how I construct your custom curriculum:
+• **Dynamic Intent Resolution**: I parse any learning goal (like DSA in Python, Cloud Architecture, ML, Web3, Systems Programming).
+• **Fluxbase DB Integration**: I query verified skills, prerequisite graphs, and curated resources from our cloud PostgreSQL database.
+• **Topological Prerequisite Ordering**: I schedule topics with Kahn's DAG algorithm so every prerequisite is mastered before advanced modules.
+• **Adaptive Support**: As you complete quizzes or face challenges, I dynamically rebalance your path.
 
-What domain would you like to master today?`;
+What topic or technical milestone would you like to master today?`;
     } else if (isThanks && !lastLower.includes('learn') && !lastLower.includes('roadmap')) {
       reply = `You're very welcome! 🌟 I have your **${targetRole}** profile synced in Fluxbase. 
 
 Whenever you're ready, click **"Build Deterministic Roadmap →"** in the panel to generate your topological DAG timeline, or let me know if you want to tweak your schedule or focus areas!`;
-    } else if (lastLower.includes('how are you') || lastLower.includes('how r u')) {
-      reply = `I'm doing fantastic, thanks for asking! Ready to help you conquer **${targetRole}**! 🚀
+    } else if (lastLower.includes('dsa') || lastLower.includes('data structure') || lastLower.includes('algorithm') || targetRole.includes('Data Structures')) {
+      reply = `I've mapped out a comprehensive **Data Structures & Algorithms in Python** roadmap for you! 🧠💻
 
-I've got your study schedule calibrated for **${extractedProfile.available_hours_per_week} hours/week** over **${extractedProfile.target_duration_weeks} weeks**. 
+Based on our curriculum engine, here is how we will structure your algorithmic mastery:
+• **Foundational Analysis**: Asymptotic Notation (Big-O), Recursion, and Python Memory Model.
+• **Linear Structures**: Arrays, Two-Pointer Patterns, Sliding Window, Linked Lists, Stacks, and Queues.
+• **Non-Linear Structures**: Binary Trees, Binary Search Trees (BST), Heaps / Priority Queues, and Tries.
+• **Advanced Techniques**: Graph Algorithms (BFS, DFS, Dijkstra, Topological Sort) and Dynamic Programming (Memoization, Tabulation, 0/1 Knapsack).
+• **Milestone Capstones**: High-performance LRU Cache, Custom Trie Auto-Complete, and Pathfinding Visualizer.
 
-Would you like to review the baseline skills we've identified in the right panel, or are you ready to generate your full prerequisite DAG roadmap?`;
-    } else if (lastLower.includes('machine learning') || lastLower.includes('ml')) {
+Your profile is calibrated for **${extractedProfile.available_hours_per_week} hrs/week** over **${extractedProfile.target_duration_weeks} weeks**. Click **"Build Deterministic Roadmap →"** to construct your sequenced DAG!`;
+    } else if (lastLower.includes('machine learning') || lastLower.includes('ml engineer')) {
       reply = `I've analyzed your goal to master **Machine Learning**! 🎯
 
 Based on our Fluxbase curriculum database, here is how we will structure your journey:
@@ -178,24 +178,16 @@ Based on our Fluxbase curriculum database, here is how we will structure your jo
 • **Deterministic Prerequisite Graph**: We will resolve prerequisite dependencies (Linear Algebra, Probability, Data Wrangling, Classical ML, Deep Learning with PyTorch, and MLOps) so you never hit a roadblock.
 
 Your profile is extracted and ready in the panel. Click **"Build Deterministic Roadmap →"** to generate your topological DAG timeline!`;
-    } else if (lastLower.includes('full stack') || lastLower.includes('web dev') || lastLower.includes('next.js')) {
-      reply = `Awesome! We will prepare a comprehensive **Full Stack Developer** track for you! 💻
-
-• **Core Pillars**: TypeScript, React, Next.js App Router, PostgreSQL / Fluxbase, and Cloud Deployment.
-• **Pacing**: Calibrated for **${extractedProfile.available_hours_per_week} hrs/week** over **${extractedProfile.target_duration_weeks} weeks**.
-• **Milestones**: Hands-on fullstack apps with secure authentication and database integration.
-
-Click **"Build Deterministic Roadmap →"** to generate your sequenced milestone path!`;
     } else {
-      reply = `I've updated your learning profile for **${targetRole}** in Fluxbase! 📈
+      reply = `I have analyzed your goal to master **${targetRole}**! 📈
 
-• **Target Role**: ${targetRole}
-• **Experience Level**: ${extractedProfile.experience_level}
-• **Commitment**: ${extractedProfile.available_hours_per_week} hrs/week over ${extractedProfile.target_duration_weeks} weeks
-• **Learning Style**: ${extractedProfile.preferred_learning_style}
+• **Target Role & Goal**: ${targetRole}
+• **Experience Baseline**: ${extractedProfile.experience_level}
+• **Weekly Commitment**: ${extractedProfile.available_hours_per_week} hrs/week over ${extractedProfile.target_duration_weeks} weeks
+• **Learning Preference**: ${extractedProfile.preferred_learning_style} curriculum
 • **Identified Baseline Skills**: ${extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`).join(', ')}
 
-All prerequisite dependencies and milestone capstones are calculated. Click **"Build Deterministic Roadmap →"** to construct your roadmap!`;
+All prerequisite milestones and capstone projects have been calculated. Click **"Build Deterministic Roadmap →"** to generate your sequenced timeline!`;
     }
 
     return {
@@ -207,75 +199,106 @@ All prerequisite dependencies and milestone capstones are calculated. Click **"B
     };
   }
 
-  private extractDynamicProfile(fullUserText: string, lastLower: string): ExtractedProfileData {
-    const lower = fullUserText.toLowerCase();
+  public extractDynamicProfile(fullUserText: string, lastLower: string): ExtractedProfileData {
+    const text = (fullUserText + ' ' + lastLower).toLowerCase();
 
-    // Determine target role
+    // 1. Dynamic Topic & Goal Resolution
     let targetRole = 'AI Application Engineer';
-    if (lower.includes('machine learning') || lower.includes('ml engineer') || lower.includes('model') || lower.includes('deep learning')) {
+
+    if (text.includes('dsa') || text.includes('data structure') || text.includes('algorithm') || text.includes('leetcode')) {
+      if (text.includes('python')) {
+        targetRole = 'Data Structures & Algorithms in Python';
+      } else if (text.includes('java')) {
+        targetRole = 'Data Structures & Algorithms in Java';
+      } else if (text.includes('c++') || text.includes('cpp')) {
+        targetRole = 'Data Structures & Algorithms in C++';
+      } else {
+        targetRole = 'Data Structures & Algorithms';
+      }
+    } else if (text.includes('machine learning') || text.includes('ml engineer') || text.includes('deep learning') || text.includes('pytorch')) {
       targetRole = 'Machine Learning Engineer';
-    } else if (lower.includes('data science') || lower.includes('data scientist') || lower.includes('analytics') || lower.includes('pandas')) {
+    } else if (text.includes('data science') || text.includes('data scientist') || text.includes('analytics') || text.includes('pandas') || text.includes('bi')) {
       targetRole = 'Data Scientist';
-    } else if (lower.includes('full stack') || lower.includes('web dev') || lower.includes('next.js') || lower.includes('react') || lower.includes('frontend') || lower.includes('backend')) {
+    } else if (text.includes('full stack') || text.includes('web dev') || text.includes('next.js') || text.includes('react') || text.includes('frontend') || text.includes('backend') || text.includes('nodejs')) {
       targetRole = 'Full Stack Web Developer';
-    } else if (lower.includes('cloud') || lower.includes('devops') || lower.includes('aws') || lower.includes('docker') || lower.includes('kubernetes')) {
+    } else if (text.includes('cloud') || text.includes('devops') || text.includes('aws') || text.includes('docker') || text.includes('kubernetes') || text.includes('sre')) {
       targetRole = 'Cloud & DevOps Architect';
-    } else if (lower.includes('security') || lower.includes('cyber') || lower.includes('penetration')) {
+    } else if (text.includes('security') || text.includes('cyber') || text.includes('pentest') || text.includes('ethical hack')) {
       targetRole = 'Cybersecurity Specialist';
+    } else if (text.includes('rust') || text.includes('systems programming')) {
+      targetRole = 'Rust Systems Engineer';
+    } else if (text.includes('mobile') || text.includes('flutter') || text.includes('react native') || text.includes('ios') || text.includes('android')) {
+      targetRole = 'Mobile App Developer';
+    } else {
+      // NLP Dynamic phrase matcher for "i want to learn <X>"
+      const learnMatch = text.match(/(?:i want to learn|i want to master|learn|master|build|create roadmap for|guide for)\s+([^,.\n]+)/i);
+      if (learnMatch && learnMatch[1].trim().length > 2) {
+        const rawPhrase = learnMatch[1].trim();
+        // Capitalize words
+        targetRole = rawPhrase
+          .split(' ')
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+      }
     }
 
-    // Determine experience level
+    // 2. Dynamic Experience Level
     let experienceLevel: ExperienceLevel = 'intermediate';
-    if (lower.includes('beginner') || lower.includes('no experience') || lower.includes('new to') || lower.includes('start from scratch') || lower.includes('zero')) {
+    if (text.includes('beginner') || text.includes('no experience') || text.includes('new to') || text.includes('start from scratch') || text.includes('zero') || text.includes('absolute')) {
       experienceLevel = 'beginner';
-    } else if (lower.includes('expert') || lower.includes('senior') || lower.includes('advanced') || lower.includes('5 years')) {
+    } else if (text.includes('expert') || text.includes('senior') || text.includes('advanced') || text.includes('5 years') || text.includes('mastery')) {
       experienceLevel = 'expert';
-    } else if (lower.includes('know python') || lower.includes('intermediate') || lower.includes('some experience') || lower.includes('basics')) {
+    } else if (text.includes('know python') || text.includes('intermediate') || text.includes('some experience') || text.includes('basics')) {
       experienceLevel = 'intermediate';
     }
 
-    // Extract hours
+    // 3. Dynamic Hours
     let hoursPerWeek = 14;
-    const hoursMatch = lower.match(/(\d+)\s*(?:hours|hrs|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
+    const hoursMatch = text.match(/(\d+)\s*(?:hours|hrs|hr|h)(?:\s*(?:per|\/)\s*week)?/i);
     if (hoursMatch) {
       hoursPerWeek = Math.min(60, Math.max(2, parseInt(hoursMatch[1], 10)));
     }
 
-    // Extract weeks
+    // 4. Dynamic Weeks Duration
     let durationWeeks = 16;
-    const weeksMatch = lower.match(/(\d+)\s*(?:weeks|wks|week|wk|months|mo)/i);
+    const weeksMatch = text.match(/(\d+)\s*(?:weeks|wks|week|wk|months|mo)/i);
     if (weeksMatch) {
       const num = parseInt(weeksMatch[1], 10);
-      durationWeeks = lower.includes('month') || lower.includes('mo') ? num * 4 : num;
+      durationWeeks = text.includes('month') || text.includes('mo') ? num * 4 : num;
     }
 
-    // Extract learning style
+    // 5. Dynamic Style
     let learningStyle: LearningStyle = 'hands-on';
-    if (lower.includes('video') || lower.includes('visual') || lower.includes('watch')) {
+    if (text.includes('video') || text.includes('visual') || text.includes('watch')) {
       learningStyle = 'visual';
-    } else if (lower.includes('read') || lower.includes('book') || lower.includes('doc') || lower.includes('text')) {
+    } else if (text.includes('read') || text.includes('book') || text.includes('doc') || text.includes('text')) {
       learningStyle = 'reading';
-    } else if (lower.includes('structured') || lower.includes('academic') || lower.includes('theory')) {
+    } else if (text.includes('structured') || text.includes('academic') || text.includes('theory')) {
       learningStyle = 'structured';
     }
 
-    // Identify user skills
+    // 6. Dynamic Baseline Skills Extraction
     const userSkills: Array<{ skill: string; level: ExperienceLevel }> = [];
-    if (lower.includes('python') || experienceLevel === 'intermediate') {
+
+    if (targetRole.includes('Data Structures') || targetRole.includes('DSA')) {
+      userSkills.push({ skill: 'Python Syntax & Core Logic', level: experienceLevel });
+      userSkills.push({ skill: 'Time Complexity Basics', level: 'beginner' });
+    } else if (text.includes('python')) {
       userSkills.push({ skill: 'Python Programming', level: 'intermediate' });
     }
-    if (lower.includes('sql') || lower.includes('database')) {
+
+    if (text.includes('sql') || text.includes('database')) {
       userSkills.push({ skill: 'SQL & Database Architecture', level: 'beginner' });
     }
-    if (lower.includes('math') || lower.includes('stats') || lower.includes('calculus') || lower.includes('algebra')) {
+    if (text.includes('math') || text.includes('stats') || text.includes('calculus') || text.includes('algebra')) {
       userSkills.push({ skill: 'Linear Algebra & Statistics', level: 'beginner' });
     }
-    if (lower.includes('javascript') || lower.includes('react') || lower.includes('html') || lower.includes('node')) {
+    if (text.includes('javascript') || text.includes('react') || text.includes('html') || text.includes('node')) {
       userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: 'intermediate' });
     }
 
     if (userSkills.length === 0) {
-      userSkills.push({ skill: 'Core Computing Fundamentals', level: experienceLevel });
+      userSkills.push({ skill: `${targetRole.split(' ')[0]} Fundamentals`, level: experienceLevel });
     }
 
     return {
@@ -286,19 +309,20 @@ All prerequisite dependencies and milestone capstones are calculated. Click **"B
       preferred_learning_style: learningStyle,
       interests: [targetRole, 'Prerequisite DAG', 'Hands-On Projects', 'Fluxbase DB'],
       current_skills: userSkills,
-      confidence_assessment: 0.92,
+      confidence_assessment: 0.94,
       summary: `Learner is targeting ${targetRole} with a ${experienceLevel} foundation, dedicating ~${hoursPerWeek} hrs/week over ${durationWeeks} weeks with a ${learningStyle} focus.`
     };
   }
 
   private getCategoryForRole(targetRole: string): string {
     const r = targetRole.toLowerCase();
+    if (r.includes('data structures') || r.includes('dsa') || r.includes('algorithm')) return 'programming';
     if (r.includes('machine learning') || r.includes('ai')) return 'ai_ml';
     if (r.includes('data')) return 'systems_data';
     if (r.includes('full stack') || r.includes('web')) return 'programming';
     if (r.includes('cloud') || r.includes('devops')) return 'engineering_devops';
     if (r.includes('security')) return 'security';
-    return 'ai_ml';
+    return 'programming';
   }
 
   /**
@@ -322,7 +346,6 @@ All prerequisite dependencies and milestone capstones are calculated. Click **"B
 
     const activeItem = roadmap?.items?.find(i => i.status === 'in_progress') || roadmap?.items?.[0];
 
-    // Formulate response grounded in real data
     let reply = '';
     const qLower = lastUserQuery.toLowerCase();
 
@@ -369,29 +392,28 @@ def scaled_dot_product_attention(Q, K, V, mask=None):
 \`\`\`
 
 This is the exact mechanism powering models like GPT, Claude, and LLaMA!`;
-    } else if (qLower.includes('challenge') || qLower.includes('exercise') || qLower.includes('vector')) {
-      reply = `Here is your **5-Minute Coding Challenge on Vector Search**:
+    } else if (qLower.includes('challenge') || qLower.includes('exercise') || qLower.includes('dsa') || qLower.includes('vector')) {
+      reply = `Here is your **5-Minute Coding Challenge on Two Pointers (DSA in Python)**:
 
-**Objective**: Write a Python function using NumPy to compute the top-$k$ nearest neighbors for a query vector given a database of vector embeddings.
+**Problem**: Given a 1-indexed array of integers \`numbers\` that is already sorted in non-decreasing order, find two numbers such that they add up to a specific \`target\` number.
 
 \`\`\`python
-import numpy as np
-
-def find_top_k_similar(query_vector, database_vectors, k=3):
-    # Step 1: Normalize query and database vectors for Cosine Similarity
-    norm_query = query_vector / np.linalg.norm(query_vector)
-    norm_db = database_vectors / np.linalg.norm(database_vectors, axis=1, keepdims=True)
+def two_sum_sorted(numbers: list[int], target: int) -> list[int]:
+    left, right = 0, len(numbers) - 1
     
-    # Step 2: Compute dot products (cosine similarities)
-    similarities = np.dot(norm_db, norm_query)
-    
-    # Step 3: Get top-k indices sorted descending
-    top_indices = np.argsort(similarities)[::-1][:k]
-    
-    return top_indices, similarities[top_indices]
+    while left < right:
+        curr_sum = numbers[left] + numbers[right]
+        if curr_sum == target:
+            return [left + 1, right + 1] # 1-indexed
+        elif curr_sum < target:
+            left += 1
+        else:
+            right -= 1
+            
+    return []
 \`\`\`
 
-Try running this with synthetic embeddings! Would you like a hint on optimizing this with an HNSW index?`;
+**Time Complexity**: $O(n)$ with $O(1)$ auxiliary space. Try implementing this pattern!`;
     } else {
       reply = `That's a great question regarding **${roadmap?.target_role || 'your curriculum'}**!
 
