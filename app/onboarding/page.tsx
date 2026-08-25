@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { ExtractedProfileData } from '@/lib/ai/goal_analyzer';
 import { useAuth } from '@/lib/auth/context';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -216,13 +217,17 @@ export default function OnboardingPage() {
 
                   <div className="space-y-1.5 max-w-[85%]">
                     <div
-                      className={`rounded-2xl p-3.5 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
+                      className={`rounded-2xl p-3.5 text-xs sm:text-sm leading-relaxed ${
                         m.role === 'user'
                           ? 'bg-neutral-900 text-white rounded-tr-none'
                           : 'bg-neutral-100/90 text-neutral-900 rounded-tl-none border border-neutral-200/80'
                       }`}
                     >
-                      {m.content}
+                      {m.role === 'user' ? (
+                        <p className="whitespace-pre-wrap">{m.content}</p>
+                      ) : (
+                        <MarkdownRenderer content={m.content} />
+                      )}
                     </div>
 
                     {/* Agentic Tool Calls Badge */}

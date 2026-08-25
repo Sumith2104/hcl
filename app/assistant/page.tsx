@@ -18,6 +18,7 @@ import {
 import { BEDROCK_MODELS, DEFAULT_BEDROCK_MODEL } from '@/lib/aws/models';
 import { cn, formatUSD } from '@/lib/utils';
 import { useAuth } from '@/lib/auth/context';
+import { MarkdownRenderer } from '@/components/markdown-renderer';
 
 interface ChatMessage {
   id: string;
@@ -171,13 +172,17 @@ export default function AssistantPage() {
 
               <div className="space-y-1 max-w-[85%]">
                 <div
-                  className={`rounded-2xl p-4 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
+                  className={`rounded-2xl p-4 text-xs sm:text-sm leading-relaxed ${
                     msg.role === 'user'
                       ? 'bg-neutral-900 text-white rounded-tr-none'
                       : 'bg-neutral-50 text-neutral-900 rounded-tl-none border border-neutral-200/80 shadow-sm'
                   }`}
                 >
-                  {msg.content}
+                  {msg.role === 'user' ? (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  ) : (
+                    <MarkdownRenderer content={msg.content} />
+                  )}
                 </div>
 
                 <div
