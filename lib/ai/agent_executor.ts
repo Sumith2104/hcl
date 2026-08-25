@@ -559,6 +559,19 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 • **RAG & Agentic Tool Use**: Vector Semantic Embeddings, Chunking Strategies, DSPy Automated Prompt Optimization, and AWS Bedrock Function Calling.
 • **Evaluation, Safety & Red-Teaming**: Prompt Injection Defense, Jailbreak Mitigation, Hallucination Benchmarks, and LLM-as-a-Judge Eval Pipelines.
 • **Capstone Projects**: Build an Automated DSPy Prompt Optimizer and a Multi-Agent RAG Support Bot.`;
+    } else if (lower.includes('backend') || lower.includes('back-end') || lower.includes('back end')) {
+      pillars = `• **API Architecture & Protocols**: RESTful APIs, GraphQL Schema Design, gRPC, WebSockets, HTTP/2 & HTTP/3.
+• **Database Engineering & Caching**: PostgreSQL Relational Modeling, Redis In-Memory Caching, Indexes (B-Tree/Hash), ACID Transactions, Connection Pooling.
+• **Authentication & API Security**: JWT, OAuth2, RBAC, Rate Limiting, CORS, Encryption at Rest & In-Transit.
+• **Distributed Systems & Asynchronous Queues**: Message Brokers (Kafka, RabbitMQ), Event-Driven Architecture, Background Workers.
+• **Observability & Deployment**: Docker Containers, CI/CD Pipelines, Prometheus & Grafana Monitoring, Distributed Tracing.
+• **Capstone Projects**: High-Throughput Distributed URL Shortener with Redis Rate Limiting & E-Commerce Payment Processing Engine.`;
+    } else if (lower.includes('frontend') || lower.includes('front-end') || lower.includes('front end')) {
+      pillars = `• **Modern JavaScript & TypeScript**: Closures, Prototypes, Event Loop, Async/Await, Advanced Generics, Strict Typing.
+• **Component Architecture & State**: React 18/19, Next.js Server Components, Virtual DOM, Zustand, TanStack Query.
+• **Performance & Web Vitals**: Code Splitting, Lazy Loading, SSR vs SSG vs ISR, Core Web Vitals (LCP, FID, CLS).
+• **CSS Architecture & Design Systems**: Tailwind CSS, CSS-in-JS, Responsive Layouts, Accessibility (a11y), Micro-interactions.
+• **Capstone Projects**: Collaborative Real-Time Whiteboard, High-Performance Dashboard with Virtualized Tables.`;
     } else if (lower.includes('data structures') || lower.includes('dsa') || lower.includes('algorithm')) {
       pillars = `• **Asymptotic Foundations**: Time & Space Complexity (Big-O), Recursion, and Memory Management.
 • **Linear Data Structures**: Arrays, Two Pointers, Sliding Window, Linked Lists, Stacks, and Queues.
@@ -576,7 +589,7 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 • **Agentic Workflows**: Multi-step reasoning loops, autonomous tool invocation, and stateful memory guards.
 • **Production Deployment**: Streaming Server-Sent Events (SSE), cost governance token guards, and observability logging.
 • **Capstone Projects**: Autonomous Code Review Agent & Enterprise Document RAG Assistant.`;
-    } else if (lower.includes('full stack') || lower.includes('web dev')) {
+    } else if (lower.includes('full stack') || lower.includes('fullstack') || lower.includes('web dev')) {
       pillars = `• **Frontend**: TypeScript, React, Next.js App Router, TailwindCSS, State Management.
 • **Backend & DB**: Node.js APIs, Server Actions, PostgreSQL / Fluxbase Database Schema Design.
 • **Cloud & DevOps**: Authentication, REST/GraphQL APIs, Serverless Deployment on Vercel/AWS.`;
@@ -616,6 +629,8 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       lower.includes('prompt engineering') ||
       lower.includes('ai engineer') ||
       lower.includes('data science') ||
+      lower.includes('backend') ||
+      lower.includes('frontend') ||
       lower.includes('full stack') ||
       lower.includes('web') ||
       lower.includes('python') ||
@@ -646,6 +661,12 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       targetRole = 'Machine Learning Engineer';
     } else if (pLower.includes('data science') || pLower.includes('data scientist')) {
       targetRole = 'Data Scientist';
+    } else if (pLower.includes('backend') || pLower.includes('back-end') || pLower.includes('back end')) {
+      targetRole = 'Backend Developer';
+    } else if (pLower.includes('frontend') || pLower.includes('front-end') || pLower.includes('front end')) {
+      targetRole = 'Frontend Developer';
+    } else if (pLower.includes('full stack') || pLower.includes('fullstack') || pLower.includes('web dev') || pLower.includes('web developer')) {
+      targetRole = 'Full Stack Web Developer';
     } else if (pLower.includes('dsa') || pLower.includes('data structure') || pLower.includes('algorithm') || pLower.includes('leetcode')) {
       if (pLower.includes('python')) targetRole = 'Data Structures & Algorithms in Python';
       else if (pLower.includes('java')) targetRole = 'Data Structures & Algorithms in Java';
@@ -653,8 +674,6 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       else targetRole = 'Data Structures & Algorithms in Python';
     } else if (pLower.includes('aptitude') || pLower.includes('placement')) {
       targetRole = 'Campus Placement & Aptitude';
-    } else if (pLower.includes('full stack') || pLower.includes('web dev') || pLower.includes('next.js') || pLower.includes('react') || pLower.includes('frontend') || pLower.includes('backend')) {
-      targetRole = 'Full Stack Web Developer';
     } else if (pLower.includes('cloud') || pLower.includes('devops') || pLower.includes('aws') || pLower.includes('docker') || pLower.includes('kubernetes')) {
       targetRole = 'Cloud & DevOps Architect';
     } else if (pLower.includes('security') || pLower.includes('cyber') || pLower.includes('pentest')) {
@@ -679,16 +698,20 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
         targetRole = 'AI Application Engineer';
       } else if (fullLower.includes('machine learning') || fullLower.includes('ml engineer')) {
         targetRole = 'Machine Learning Engineer';
+      } else if (fullLower.includes('backend') || fullLower.includes('back-end') || fullLower.includes('back end')) {
+        targetRole = 'Backend Developer';
+      } else if (fullLower.includes('frontend') || fullLower.includes('front-end') || fullLower.includes('front end')) {
+        targetRole = 'Frontend Developer';
+      } else if (fullLower.includes('full stack') || fullLower.includes('fullstack') || fullLower.includes('web dev')) {
+        targetRole = 'Full Stack Web Developer';
       } else if (fullLower.includes('dsa') || fullLower.includes('data structure')) {
         targetRole = 'Data Structures & Algorithms in Python';
-      } else if (fullLower.includes('full stack')) {
-        targetRole = 'Full Stack Web Developer';
       } else {
         const matchFull = fullUserText.match(/(?:i want to learn|i want to master|learn|master|road\s*map\s*for|i\s*need\s*(?:a\s*)?(?:complete\s*)?road\s*map\s*for)\s+([^,.\n?!]+)/i);
         if (matchFull && matchFull[1].trim().length > 2) {
           targetRole = matchFull[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         } else {
-          targetRole = 'AI Application Engineer';
+          targetRole = 'Backend Developer';
         }
       }
     }
@@ -755,6 +778,14 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
     if (targetRole.includes('Prompt')) {
       userSkills.push({ skill: 'LLM Prompt Structuring', level: experienceLevel });
       userSkills.push({ skill: 'Context & Few-Shot Design', level: 'beginner' });
+    } else if (targetRole.includes('Backend')) {
+      userSkills.push({ skill: 'Backend API Design & REST', level: experienceLevel });
+      userSkills.push({ skill: 'PostgreSQL & Database Modeling', level: 'beginner' });
+      userSkills.push({ skill: 'Redis Caching & Message Queues', level: 'beginner' });
+    } else if (targetRole.includes('Frontend')) {
+      userSkills.push({ skill: 'Modern JavaScript & React', level: experienceLevel });
+      userSkills.push({ skill: 'CSS & Responsive Layouts', level: 'beginner' });
+      userSkills.push({ skill: 'State Management & Next.js', level: 'beginner' });
     } else if (targetRole.includes('Data Structures') || targetRole.includes('DSA')) {
       userSkills.push({ skill: 'Python Syntax & Core Logic', level: experienceLevel });
       userSkills.push({ skill: 'Time Complexity Basics', level: 'beginner' });
@@ -764,6 +795,7 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
     } else if (targetRole.includes('Full Stack') || fullLower.includes('web') || fullLower.includes('next.js') || fullLower.includes('react')) {
       userSkills.push({ skill: 'JavaScript & Web Fundamentals', level: experienceLevel });
       userSkills.push({ skill: 'React / Frontend Architecture', level: 'beginner' });
+      userSkills.push({ skill: 'Backend API & Database Design', level: 'beginner' });
     }
 
     if (userSkills.length === 0) {
@@ -787,8 +819,8 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
     const r = targetRole.toLowerCase();
     if (r.includes('prompt') || r.includes('ai') || r.includes('machine learning')) return 'ai_ml';
     if (r.includes('data structures') || r.includes('dsa') || r.includes('algorithm')) return 'programming';
-    if (r.includes('data')) return 'systems_data';
-    if (r.includes('full stack') || r.includes('web')) return 'programming';
+    if (r.includes('backend') || r.includes('database') || r.includes('data')) return 'systems_data';
+    if (r.includes('frontend') || r.includes('full stack') || r.includes('web')) return 'programming';
     if (r.includes('cloud') || r.includes('devops')) return 'engineering_devops';
     if (r.includes('security')) return 'security';
     return 'programming';
