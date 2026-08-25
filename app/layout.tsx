@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
-import { Sidebar } from '@/components/sidebar';
+import { Navbar } from '@/components/navbar';
 import { AuthProvider } from '@/lib/auth/context';
 
 export const metadata: Metadata = {
@@ -15,14 +15,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="bg-white text-neutral-900 min-h-screen flex antialiased">
+      <body className="bg-white text-neutral-900 min-h-screen flex flex-col antialiased">
         <AuthProvider>
-          <Sidebar />
-          <div className="flex-1 flex flex-col min-w-0 lg:pl-64">
-            <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-              {children}
-            </main>
-          </div>
+          <Navbar />
+          <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            {children}
+          </main>
         </AuthProvider>
       </body>
     </html>
