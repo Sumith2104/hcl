@@ -205,11 +205,11 @@ To construct your personalized, deterministic prerequisite learning path, tell m
                 AI Learning Architect
               </h1>
               <span className="px-2 py-0.5 rounded-full bg-neutral-100 border border-neutral-200 text-[10px] font-mono font-medium text-neutral-600">
-                Zhipu AI · GLM 5.3
+                Open-Source Agentic AI · Llama 3.3 / GLM
               </span>
             </div>
             <p className="text-[11px] text-neutral-500">
-              Conversational profiling with GLM 5.3 & Fluxbase database tool calling
+              Conversational profiling with Llama 3.3, GLM 5.3 & Fluxbase database tool calling
             </p>
           </div>
         </div>

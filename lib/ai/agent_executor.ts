@@ -2,6 +2,7 @@ import { AGENT_TOOLS, AgentReasoningStep, AgentToolCall } from './agent_tools';
 import { ExtractedProfileData } from './goal_analyzer';
 import { bedrock } from '../aws/bedrock';
 import { glm } from './glm_client';
+import { openLLM } from './open_llm_client';
 import { ExperienceLevel, LearningStyle } from '../db/schema';
 
 export interface AgentExecutionResult {
@@ -59,6 +60,41 @@ export class AgenticEngine {
           current_skills_raw: extractedProfile.current_skills.map(s => `${s.skill} (${s.level})`)
         }
       }).catch(() => {});
+    }
+
+    // 1. Check Open-Source Agentic Models (Groq Llama 3.3 70B, OpenRouter Free, Local Ollama)
+    try {
+      const systemPrompt = `You are the empathetic, expert AI Learning Architect.
+Your mission:
+1. Converse naturally, dynamically, and empathetically with the learner.
+2. Ask diagnostic questions when a learner introduces a new goal without specifying their schedule or background.
+3. Validate their requests (feasibility, hours, experience level) and provide structured, tailored curriculum recommendations.
+4. When the user asks for Backend Developer, focus exclusively on Backend (APIs, Databases, Caching, Queues, Security).
+5. Always write clean, formatted markdown.`;
+
+      const llmRes = await openLLM.generateCompletion(
+        conversation.map(m => ({ role: m.role as any, content: m.content })),
+        systemPrompt
+      );
+
+      if (llmRes.success && llmRes.reply) {
+        toolCalls.push({
+          tool: 'open_source_llm',
+          args: { provider: llmRes.provider, model: llmRes.model, latencyMs: llmRes.latencyMs },
+          result: `Live completion from ${llmRes.provider} (${llmRes.model})`,
+          status: 'success'
+        });
+
+        return {
+          reply: llmRes.reply,
+          steps: [{ thought: `Generated dynamic reasoning via Open-Source model ${llmRes.model}.` }],
+          toolCalls,
+          extractedProfile,
+          isReadyToBuild: hasGoal
+        };
+      }
+    } catch (err) {
+      console.warn('OpenLLM call failed:', err);
     }
 
     // 1. Check if Live GLM 5.3 is configured with API Key
