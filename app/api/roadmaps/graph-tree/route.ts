@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fluxbase } from '@/lib/db/fluxbase';
 import { bedrock } from '@/lib/aws/bedrock';
+import { Roadmap, RoadmapItem, RoadmapResource } from '@/lib/db/schema';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,7 @@ export interface GraphNodeTree {
   id: string;
   label: string;
   type: 'root' | 'strategy' | 'tactic' | 'kpi';
+  level: number;
   description?: string;
   complexity?: string;
   resourceType?: 'book' | 'interactive' | 'video' | 'docs' | 'project';
@@ -22,12 +24,19 @@ export async function GET(req: NextRequest) {
     const userId = searchParams.get('userId') || 'usr_demo_101';
     const customGoal = searchParams.get('goal');
 
-    // Retrieve user's active roadmap from Fluxbase
+    // 1. Retrieve user's active roadmap from Fluxbase (generated during onboarding)
     const roadmap = await fluxbase.getActiveRoadmap(userId);
-    const targetGoal = customGoal || roadmap?.target_role || roadmap?.target_goal || 'Data Structures & Algorithms in Python';
+    const targetGoal = customGoal || roadmap?.target_role || roadmap?.target_goal || 'Software Engineering & Algorithmic Foundations';
 
-    // Generate dynamic 3-tier tree via AI/Bedrock based on targetGoal
-    const tree = generateDynamicAITree(targetGoal);
+    let tree: GraphNodeTree;
+
+    // 2. If user has active roadmap items from onboarding, build tree directly from them
+    if (roadmap && roadmap.items && roadmap.items.length > 0 && !customGoal) {
+      tree = buildTreeFromRoadmap(roadmap);
+    } else {
+      // 3. Otherwise generate dynamic AI tree for the requested goal
+      tree = await generateAIKnowledgeTree(targetGoal, userId);
+    }
 
     return NextResponse.json({
       success: true,
@@ -46,9 +55,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const { targetGoal, userId = 'usr_demo_101' } = await req.json();
-    const goal = targetGoal || 'Data Structures & Algorithms in Python';
+    const goal = targetGoal || 'Personalized Technical Track';
 
-    const tree = generateDynamicAITree(goal);
+    const tree = await generateAIKnowledgeTree(goal, userId);
 
     return NextResponse.json({
       success: true,
@@ -60,49 +69,413 @@ export async function POST(req: NextRequest) {
   }
 }
 
-function generateDynamicAITree(goal: string): GraphNodeTree {
-  const gLower = goal.toLowerCase();
+/**
+ * Transforms the user's active Onboarding Roadmap into a multi-level 2D knowledge tree
+ */
+function buildTreeFromRoadmap(roadmap: Roadmap): GraphNodeTree {
+  // Group roadmap items by Phase
+  const phasesMap = new Map<number, { title: string; items: RoadmapItem[] }>();
 
-  // 1. Data Structures & Algorithms (in Python, Java, C++, or general)
-  if (gLower.includes('dsa') || gLower.includes('data structure') || gLower.includes('algorithm') || gLower.includes('leetcode')) {
-    const lang = gLower.includes('java') ? 'Java' : gLower.includes('c++') || gLower.includes('cpp') ? 'C++' : 'Python';
+  roadmap.items.forEach(item => {
+    if (!phasesMap.has(item.phase)) {
+      phasesMap.set(item.phase, {
+        title: item.phase_title || `Phase ${item.phase}`,
+        items: []
+      });
+    }
+    phasesMap.get(item.phase)!.items.push(item);
+  });
+
+  const rootId = `root_${roadmap.id}`;
+  const strategyChildren: GraphNodeTree[] = [];
+
+  Array.from(phasesMap.entries()).forEach(([phaseNum, phaseData], pIdx) => {
+    const stratId = `strat_${phaseNum}_${pIdx}`;
+    const tacticChildren: GraphNodeTree[] = [];
+
+    phaseData.items.forEach((item, iIdx) => {
+      const tactId = `tact_${item.id}_${iIdx}`;
+      const kpiChildren: GraphNodeTree[] = [];
+
+      // Add attached learning resources as leaf KPI nodes
+      if (item.resources && item.resources.length > 0) {
+        item.resources.forEach((res: RoadmapResource, rIdx: number) => {
+          kpiChildren.push({
+            id: `kpi_${res.id || rIdx}_${tactId}`,
+            label: res.resource?.title || `${item.skill_name} Learning Resource`,
+            type: 'kpi',
+            level: 3,
+            resourceType: (res.resource?.type as any) || 'interactive',
+            author: res.resource?.platform || (res.resource?.type === 'book' ? 'Authoritative Text' : undefined),
+            url: res.resource?.url || 'https://google.com/search?q=' + encodeURIComponent(item.skill_name),
+            description: res.recommendation_reason || res.resource?.description || `Master ${item.skill_name} with this resource.`
+          });
+        });
+      } else {
+        // Synthesize dynamic resource nodes if none attached
+        kpiChildren.push({
+          id: `kpi_res_book_${tactId}`,
+          label: `📖 Textbook: Mastering ${item.skill_name}`,
+          type: 'kpi',
+          level: 3,
+          resourceType: 'book',
+          author: 'Curated Reference',
+          url: 'https://www.google.com/search?q=' + encodeURIComponent(`${item.skill_name} book pdf`),
+          description: `Authoritative reference text and foundational theory for ${item.skill_name}.`
+        });
+        kpiChildren.push({
+          id: `kpi_res_drill_${tactId}`,
+          label: `💻 Interactive Sandbox: ${item.skill_name} Drills`,
+          type: 'kpi',
+          level: 3,
+          resourceType: 'interactive',
+          author: 'Sandbox Labs',
+          url: 'https://github.com/topics/' + encodeURIComponent(item.skill_name.toLowerCase().replace(/\s+/g, '-')),
+          description: item.milestone_project ? `Required Capstone: ${item.milestone_project}` : `Hands-on drills for ${item.skill_name}.`
+        });
+      }
+
+      tacticChildren.push({
+        id: tactId,
+        label: item.skill_name,
+        type: 'tactic',
+        level: 2,
+        description: item.milestone,
+        complexity: `Est: ~${item.estimated_hours} hrs · Step #${item.sequence_order}`,
+        children: kpiChildren
+      });
+    });
+
+    strategyChildren.push({
+      id: stratId,
+      label: `${phaseNum}. ${phaseData.title}`,
+      type: 'strategy',
+      level: 1,
+      description: `Core modular learning phase with ${phaseData.items.length} key milestones.`,
+      children: tacticChildren
+    });
+  });
+
+  return {
+    id: rootId,
+    label: roadmap.target_role || roadmap.target_goal || 'Learning Track',
+    type: 'root',
+    level: 0,
+    description: roadmap.target_goal || `Personalized ${roadmap.target_role} roadmap generated via AI onboarding.`,
+    children: strategyChildren
+  };
+}
+
+/**
+ * Generates arbitrary N-branch AI Knowledge Tree for ANY domain (DSA, Placement Aptitude, Machine Learning, Rust, Web3, etc.)
+ */
+async function generateAIKnowledgeTree(goal: string, userId: string): Promise<GraphNodeTree> {
+  const cleanGoal = goal.trim().replace(/^i want to learn\s+/i, '').replace(/^roadmap for\s+/i, '');
+  const gLower = cleanGoal.toLowerCase();
+
+  // If AWS Bedrock is live, generate via Claude 3.5 Sonnet
+  if (bedrock.isLiveConfigured()) {
+    try {
+      const prompt = `Generate a hierarchical 4-level knowledge tree JSON for the domain: "${cleanGoal}".
+Format JSON strictly matching:
+{
+  "id": "root",
+  "label": "${cleanGoal}",
+  "type": "root",
+  "level": 0,
+  "description": "...",
+  "children": [
+    {
+      "id": "strat_1",
+      "label": "1. Strategy Pillar Name",
+      "type": "strategy",
+      "level": 1,
+      "children": [
+        {
+          "id": "tact_1_1",
+          "label": "Tactic Sub-Topic",
+          "type": "tactic",
+          "level": 2,
+          "description": "...",
+          "children": [
+            {
+              "id": "kpi_1_1_1",
+              "label": "📖 Book / Resource Name",
+              "type": "kpi",
+              "level": 3,
+              "resourceType": "book",
+              "author": "Author Name",
+              "url": "https://...",
+              "description": "..."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}`;
+      const res = await bedrock.invokeText(prompt, {
+        systemPrompt: 'You are an expert curriculum architect. Output only valid JSON without markdown fences.',
+        userId
+      });
+      const parsed = JSON.parse(res.result.replace(/```json|```/g, '').trim());
+      if (parsed && parsed.children && parsed.children.length > 0) {
+        return parsed;
+      }
+    } catch (e) {
+      console.warn('Bedrock tree generation fallback:', e);
+    }
+  }
+
+  // Dynamic Generative Synthesis Engine for arbitrary user goals
+  return synthesizeDomainTree(cleanGoal);
+}
+
+/**
+ * Synthesizes an arbitrary N-branch knowledge tree with domain-specific pillars, tactics, books, and sandboxes
+ */
+function synthesizeDomainTree(domain: string): GraphNodeTree {
+  const dLower = domain.toLowerCase();
+
+  // Aptitude / Placement Preparation
+  if (dLower.includes('aptitude') || dLower.includes('placed') || dLower.includes('placement') || dLower.includes('interview')) {
+    return {
+      id: 'root_aptitude',
+      label: 'Campus & Software Placement Aptitude',
+      type: 'root',
+      level: 0,
+      description: 'Comprehensive curriculum for campus recruitment tests, quantitative aptitude, logical reasoning, and technical interview drills.',
+      children: [
+        {
+          id: 'strat_apt_1',
+          label: '1. Quantitative Ability & Math Foundations',
+          type: 'strategy',
+          level: 1,
+          children: [
+            {
+              id: 'tact_apt_1_1',
+              label: 'Arithmetic & Speed Calculations',
+              type: 'tactic',
+              level: 2,
+              description: 'Percentages, Profit & Loss, Ratio & Proportion, Averages, and Vedic Math speed shortcuts.',
+              complexity: 'Speed Target: <45 seconds per question',
+              children: [
+                {
+                  id: 'kpi_apt_1_1_1',
+                  label: '📖 Book: Quantitative Aptitude for Competitive Examinations',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'book',
+                  author: 'Dr. R.S. Aggarwal',
+                  url: 'https://www.google.com/search?q=Quantitative+Aptitude+RS+Aggarwal',
+                  description: 'The standard benchmark textbook with 5000+ solved arithmetic questions and shortcuts.'
+                },
+                {
+                  id: 'kpi_apt_1_1_2',
+                  label: '💻 Practice: IndiaBIX Quantitative Practice Sandbox',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'interactive',
+                  author: 'IndiaBIX',
+                  url: 'https://www.indiabix.com/aptitude/questions-and-answers/',
+                  description: 'Topic-wise timed aptitude tests with detailed explanation keys.'
+                }
+              ]
+            },
+            {
+              id: 'tact_apt_1_2',
+              label: 'Algebra, Geometry & Permutations (P&C)',
+              type: 'tactic',
+              level: 2,
+              description: 'Time & Work, Speed Time & Distance, Probability, Combinatorics, and Number Systems.',
+              complexity: 'Weightage: 35% in MNC online assessments',
+              children: [
+                {
+                  id: 'kpi_apt_1_2_1',
+                  label: '📖 Book: How to Prepare for Quantitative Aptitude for CAT',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'book',
+                  author: 'Arun Sharma',
+                  url: 'https://www.google.com/search?q=Arun+Sharma+Quantitative+Aptitude',
+                  description: 'Advanced problem sets for high-tier company screening tests (TCS Digital, Infosys SP, Cognizant GenC Next).'
+                },
+                {
+                  id: 'kpi_apt_1_2_2',
+                  label: '🎥 Video: Speed Math & Time-Work Shortcuts Masterclass',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'video',
+                  author: 'Feel Free to Learn',
+                  url: 'https://www.youtube.com',
+                  description: 'Formula-free shortcut techniques for time & work and pipes & cisterns.'
+                }
+              ]
+            }
+          ]
+        },
+        {
+          id: 'strat_apt_2',
+          label: '2. Logical Reasoning & Data Interpretation',
+          type: 'strategy',
+          level: 1,
+          children: [
+            {
+              id: 'tact_apt_2_1',
+              label: 'Analytical & Diagrammatic Reasoning',
+              type: 'tactic',
+              level: 2,
+              description: 'Seating Arrangements, Syllogisms, Blood Relations, Coding-Decoding, and Direction Sense.',
+              complexity: 'Target: 100% accuracy on arrangement puzzles',
+              children: [
+                {
+                  id: 'kpi_apt_2_1_1',
+                  label: '📖 Book: A Modern Approach to Logical Reasoning',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'book',
+                  author: 'Dr. R.S. Aggarwal',
+                  url: 'https://www.google.com/search?q=RS+Aggarwal+Logical+Reasoning',
+                  description: 'Complete verbal and non-verbal reasoning patterns with systematic deductions.'
+                },
+                {
+                  id: 'kpi_apt_2_1_2',
+                  label: '💻 Practice: GeeksforGeeks Placement Aptitude Track',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'interactive',
+                  author: 'GeeksforGeeks',
+                  url: 'https://www.geeksforgeeks.org/aptitude-questions-and-answers/',
+                  description: 'Company-specific interview puzzles and reasoning question banks.'
+                }
+              ]
+            },
+            {
+              id: 'tact_apt_2_2',
+              label: 'Data Interpretation (DI) & Caselets',
+              type: 'tactic',
+              level: 2,
+              description: 'Bar charts, Pie charts, Tabular DI, Radar graphs, and Caselet calculations.',
+              complexity: 'Speed Target: Analyze dataset in <90 seconds',
+              children: [
+                {
+                  id: 'kpi_apt_2_2_1',
+                  label: '📖 Book: Data Interpretation & Data Sufficiency',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'book',
+                  author: 'Arun Sharma',
+                  url: 'https://www.google.com/search?q=Arun+Sharma+Data+Interpretation',
+                  description: 'High-speed approximation and table subtraction methods.'
+                }
+              ]
+            }
+          ]
+        },
+        {
+          id: 'strat_apt_3',
+          label: '3. Technical Coding & Company Mock Tests',
+          type: 'strategy',
+          level: 1,
+          children: [
+            {
+              id: 'tact_apt_3_1',
+              label: 'Core CS Fundamentals (OOP, DBMS, OS)',
+              type: 'tactic',
+              level: 2,
+              description: 'SQL queries, Normalization, Process Scheduling, Threads, Memory Paging, and OOP concepts.',
+              complexity: 'Direct technical round MCQ questions',
+              children: [
+                {
+                  id: 'kpi_apt_3_1_1',
+                  label: '📖 Book: Operating System Concepts (Silberschatz)',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'book',
+                  author: 'Silberschatz, Galvin, Gagne',
+                  url: 'https://os-book.com/',
+                  description: 'Authoritative operating systems reference for technical rounds.'
+                },
+                {
+                  id: 'kpi_apt_3_1_2',
+                  label: '💻 Practice: Sanfoundry 1000 MCQs on DBMS & OS',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'interactive',
+                  author: 'Sanfoundry',
+                  url: 'https://www.sanfoundry.com/1000-database-management-system-questions-answers/',
+                  description: 'Comprehensive multiple choice questions with answers and explanations.'
+                }
+              ]
+            },
+            {
+              id: 'tact_apt_3_2',
+              label: 'Company-Specific Online Assessment Mocks',
+              type: 'tactic',
+              level: 2,
+              description: 'Simulated 90-minute full mock rounds with negative marking and auto-grading.',
+              complexity: 'Goal: >85 percentile score',
+              children: [
+                {
+                  id: 'kpi_apt_3_2_1',
+                  label: '🛠️ Capstone: 10 Full-Length Placement Mock Tests',
+                  type: 'kpi',
+                  level: 3,
+                  resourceType: 'project',
+                  author: 'AdaptiveLearn Exam Engine',
+                  url: 'https://github.com/topics/placement-preparation',
+                  description: 'Timed assessment simulator with adaptive difficulty recalibration.'
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+  }
+
+  // DSA in Python / Language-specific DSA
+  if (dLower.includes('dsa') || dLower.includes('data structure') || dLower.includes('algorithm')) {
+    const lang = dLower.includes('java') ? 'Java' : dLower.includes('c++') || dLower.includes('cpp') ? 'C++' : 'Python';
 
     return {
       id: 'root_dsa',
       label: `DSA in ${lang}`,
       type: 'root',
-      description: `Complete algorithmic mastery curriculum in ${lang} covering primitives, linear/non-linear structures, graphs, and dynamic programming.`,
+      level: 0,
+      description: `Complete algorithmic problem-solving track in ${lang}.`,
       children: [
         {
           id: 'strat_1',
           label: '1. Built-in Collections & Primitives',
           type: 'strategy',
-          description: `Core memory structures, dynamic arrays, hash tables, and set operations in ${lang}.`,
+          level: 1,
           children: [
             {
               id: 'tact_1_1',
               label: 'Lists & Dynamic Arrays',
               type: 'tactic',
-              description: 'Memory buffer growth factor, amortized O(1) appending, index slicing, and pointer swapping.',
+              level: 2,
+              description: 'Memory allocation, dynamic resizing amortized O(1), and two pointers.',
               complexity: 'Time: O(1) access | Space: O(N)',
               children: [
                 {
                   id: 'kpi_1_1_1',
                   label: '📖 Book: Fluent Python (Ch. 2 Sequences)',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'book',
                   author: 'Luciano Ramalho',
-                  url: 'https://www.oreilly.com/library/view/fluent-python-2nd/9781492056348/',
-                  description: 'Deep dive into Python memory layout, sequence unpacking, and array slicing.'
+                  url: 'https://www.oreilly.com/library/view/fluent-python-2nd/9781492056348/'
                 },
                 {
                   id: 'kpi_1_1_2',
                   label: '💻 Practice: NeetCode 150 Arrays & Two Pointers',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'interactive',
                   author: 'NeetCode',
-                  url: 'https://neetcode.io/practice',
-                  description: 'Interactive problem set on Two Sum, Container With Most Water, and Trapping Rain Water.'
+                  url: 'https://neetcode.io/practice'
                 }
               ]
             },
@@ -110,26 +483,27 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
               id: 'tact_1_2',
               label: 'Dictionaries, Sets & Hash Tables',
               type: 'tactic',
-              description: 'Hash collision resolution, load factors, set union/intersection, and hash map frequencies.',
+              level: 2,
+              description: 'Hash functions, collision handling, set lookups, and frequency maps.',
               complexity: 'Time: O(1) average lookup | Space: O(N)',
               children: [
                 {
                   id: 'kpi_1_2_1',
                   label: '📖 Book: Grokking Algorithms (Ch. 5 Hash Tables)',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'book',
                   author: 'Aditya Bhargava',
-                  url: 'https://www.manning.com/books/grokking-algorithms',
-                  description: 'Visual intuition on hash functions, collision chains, and real-world caching lookups.'
+                  url: 'https://www.manning.com/books/grokking-algorithms'
                 },
                 {
                   id: 'kpi_1_2_2',
-                  label: '🛠️ Capstone: Build an In-Memory Key-Value Store',
+                  label: '🛠️ Capstone: In-Memory Key-Value Store',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'project',
                   author: 'Curriculum Team',
-                  url: 'https://github.com/topics/hashmap-python',
-                  description: 'Implement open-addressing hash table with custom hash functions and collision probing.'
+                  url: 'https://github.com/topics/hashmap-python'
                 }
               ]
             }
@@ -139,32 +513,31 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
           id: 'strat_2',
           label: '2. Linear Structures & Pointers',
           type: 'strategy',
-          description: 'Linked lists, double-ended queues, monotonic stacks, and pointer manipulation.',
+          level: 1,
           children: [
             {
               id: 'tact_2_1',
-              label: 'Singly & Doubly Linked Lists',
+              label: 'Linked Lists & Reversal Patterns',
               type: 'tactic',
-              description: 'In-place pointer reversal, cycle detection with Floyd’s Algorithm, and sentinel nodes.',
-              complexity: 'Time: O(1) head insert | Space: O(N)',
+              level: 2,
               children: [
                 {
                   id: 'kpi_2_1_1',
                   label: '📖 Book: CLRS (Ch. 10 Elementary Data Structures)',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'book',
-                  author: 'Cormen, Leiserson, Rivest, Stein',
-                  url: 'https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/',
-                  description: 'Mathematical proofs and pointers invariants for linked data structures.'
+                  author: 'CLRS Authors',
+                  url: 'https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/'
                 },
                 {
                   id: 'kpi_2_1_2',
-                  label: '💻 Practice: LeetCode Linked List Patterns',
+                  label: '💻 Practice: LeetCode Linked List Curated',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'interactive',
                   author: 'LeetCode',
-                  url: 'https://leetcode.com/problemset/all/?topicSlugs=linked-list',
-                  description: 'Reverse Linked List, Merge K Sorted Lists, and Reorder List.'
+                  url: 'https://leetcode.com/problemset/all/?topicSlugs=linked-list'
                 }
               ]
             },
@@ -172,26 +545,16 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
               id: 'tact_2_2',
               label: 'Stacks, Queues & Monotonic Deques',
               type: 'tactic',
-              description: 'LIFO & FIFO semantics, Next Greater Element pattern, and sliding window maximum.',
-              complexity: 'Time: O(1) push/pop | Space: O(N)',
+              level: 2,
               children: [
                 {
                   id: 'kpi_2_2_1',
                   label: '🛠️ Capstone: High-Performance LRU Cache',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'project',
                   author: 'AdaptiveLearn Sandbox',
-                  url: 'https://github.com/topics/lru-cache-python',
-                  description: 'Combine Doubly Linked List with Hash Map for O(1) get & put operations.'
-                },
-                {
-                  id: 'kpi_2_2_2',
-                  label: '🎥 Video: MIT 6.006 Queues & Amortized Deques',
-                  type: 'kpi',
-                  resourceType: 'video',
-                  author: 'MIT OpenCourseWare',
-                  url: 'https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/',
-                  description: 'Lecture on dynamic data structures and monotonic stack invariants.'
+                  url: 'https://github.com/topics/lru-cache-python'
                 }
               ]
             }
@@ -199,61 +562,41 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
         },
         {
           id: 'strat_3',
-          label: '3. Hierarchical Trees & Heaps',
+          label: '3. Hierarchical Trees & Graphs',
           type: 'strategy',
-          description: 'Binary trees, binary search trees, priority queues, and character prefix trees (Tries).',
+          level: 1,
           children: [
             {
               id: 'tact_3_1',
-              label: 'Binary Trees & BST Traversals',
+              label: 'Binary Search Trees & Heap Queues',
               type: 'tactic',
-              description: 'Inorder, Preorder, Postorder, Level-Order BFS, Lowest Common Ancestor, and BST balancing.',
-              complexity: 'Time: O(log N) search | Space: O(H)',
+              level: 2,
               children: [
                 {
                   id: 'kpi_3_1_1',
-                  label: '📖 Book: The Algorithm Design Manual (Ch. 3)',
+                  label: '📖 Book: Algorithm Design Manual (Ch. 3)',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'book',
                   author: 'Steven S. Skiena',
-                  url: 'https://www.algorist.com/',
-                  description: 'Real-world data structures and balanced tree maintenance.'
-                },
-                {
-                  id: 'kpi_3_1_2',
-                  label: '💻 Practice: LeetCode Binary Tree Inorder & LCA',
-                  type: 'kpi',
-                  resourceType: 'interactive',
-                  author: 'NeetCode',
-                  url: 'https://neetcode.io/practice',
-                  description: 'Validate Binary Search Tree, Lowest Common Ancestor, and Diameter of Binary Tree.'
+                  url: 'https://www.algorist.com/'
                 }
               ]
             },
             {
               id: 'tact_3_2',
-              label: 'Min/Max Heaps & Prefix Tries',
+              label: 'Graph BFS, DFS & Dijkstra Shortest Path',
               type: 'tactic',
-              description: 'Binary heap array representation, sift-up/down, and auto-complete Trie search.',
-              complexity: 'Time: O(log N) push/pop, O(L) Trie search | Space: O(N)',
+              level: 2,
               children: [
                 {
                   id: 'kpi_3_2_1',
-                  label: '🛠️ Capstone: Build a Trie Auto-Complete Search Engine',
+                  label: '🎥 Video: MIT 6.006 Dijkstra Shortest Path',
                   type: 'kpi',
-                  resourceType: 'project',
-                  author: 'Open Source Community',
-                  url: 'https://github.com/topics/trie-autocomplete',
-                  description: 'Implement character prefix tree for sub-millisecond keyword auto-completion.'
-                },
-                {
-                  id: 'kpi_3_2_2',
-                  label: '🎥 Video: Heap Sort & Priority Queues Explained',
-                  type: 'kpi',
+                  level: 3,
                   resourceType: 'video',
-                  author: 'FreeCodeCamp',
-                  url: 'https://www.youtube.com/watch?v=fAAZixBzIAI',
-                  description: 'Visual walkthrough of binary heap array mathematics and heapq in Python.'
+                  author: 'MIT OCW',
+                  url: 'https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/'
                 }
               ]
             }
@@ -261,123 +604,33 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
         },
         {
           id: 'strat_4',
-          label: '4. Graph Algorithms & Traversals',
+          label: '4. Dynamic Programming',
           type: 'strategy',
-          description: 'Adjacency graphs, BFS, DFS, Topological Sorting, and Shortest Paths with Dijkstra.',
+          level: 1,
           children: [
             {
               id: 'tact_4_1',
-              label: 'BFS, DFS & Connected Components',
+              label: '1D Memoization & Tabulation',
               type: 'tactic',
-              description: 'Adjacency lists, visited tracking, cycle detection, and flood-fill grid traversals.',
-              complexity: 'Time: O(V + E) | Space: O(V)',
+              level: 2,
               children: [
                 {
                   id: 'kpi_4_1_1',
-                  label: '📖 Book: Grokking Algorithms (Ch. 6 Breadth-First Search)',
+                  label: '📖 Book: CLRS (Ch. 15 Dynamic Programming)',
                   type: 'kpi',
+                  level: 3,
                   resourceType: 'book',
-                  author: 'Aditya Bhargava',
-                  url: 'https://www.manning.com/books/grokking-algorithms',
-                  description: 'Visual introduction to shortest path networks and queue-based search.'
+                  author: 'CLRS Authors',
+                  url: 'https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/'
                 },
                 {
                   id: 'kpi_4_1_2',
-                  label: '💻 Practice: Number of Islands & Word Ladder',
+                  label: '💻 Practice: NeetCode 150 1D DP Suite',
                   type: 'kpi',
-                  resourceType: 'interactive',
-                  author: 'LeetCode Curated',
-                  url: 'https://leetcode.com/problemset/all/?topicSlugs=graph',
-                  description: 'Core graph traversal patterns and bidirectional BFS problem sets.'
-                }
-              ]
-            },
-            {
-              id: 'tact_4_2',
-              label: 'Topological Sort & Dijkstra Algorithm',
-              type: 'tactic',
-              description: 'Kahn’s in-degree algorithm for DAG dependencies and priority queue Dijkstra.',
-              complexity: 'Time: O((V + E) log V) | Space: O(V)',
-              children: [
-                {
-                  id: 'kpi_4_2_1',
-                  label: '🎥 Video: MIT 6.006 Dijkstra Shortest Path Proof',
-                  type: 'kpi',
-                  resourceType: 'video',
-                  author: 'MIT OpenCourseWare',
-                  url: 'https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/',
-                  description: 'Edge relaxation invariants and optimal path finding.'
-                },
-                {
-                  id: 'kpi_4_2_2',
-                  label: '🛠️ Capstone: Course Schedule Topological Resolver',
-                  type: 'kpi',
-                  resourceType: 'project',
-                  author: 'AdaptiveLearn Lab',
-                  url: 'https://github.com/topics/topological-sort',
-                  description: 'Build a dependency resolution engine for prerequisite task scheduling.'
-                }
-              ]
-            }
-          ]
-        },
-        {
-          id: 'strat_5',
-          label: '5. Dynamic Programming & Optimization',
-          type: 'strategy',
-          description: 'Optimal substructure, overlapping subproblems, 1D/2D memoization and tabulation.',
-          children: [
-            {
-              id: 'tact_5_1',
-              label: '1D Memoization & Tabulation',
-              type: 'tactic',
-              description: 'Top-down recursion with @cache, bottom-up DP tables, Climbing Stairs, and House Robber.',
-              complexity: 'Time: O(N) | Space: O(N) or O(1)',
-              children: [
-                {
-                  id: 'kpi_5_1_1',
-                  label: '📖 Book: CLRS (Ch. 15 Dynamic Programming)',
-                  type: 'kpi',
-                  resourceType: 'book',
-                  author: 'CLRS Authors',
-                  url: 'https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/',
-                  description: 'Mathematical formulations for optimal substructure and state transitions.'
-                },
-                {
-                  id: 'kpi_5_1_2',
-                  label: '💻 Practice: NeetCode 150 1D Dynamic Programming',
-                  type: 'kpi',
+                  level: 3,
                   resourceType: 'interactive',
                   author: 'NeetCode',
-                  url: 'https://neetcode.io/practice',
-                  description: 'Coin Change, Longest Increasing Subsequence, and Word Break.'
-                }
-              ]
-            },
-            {
-              id: 'tact_5_2',
-              label: '2D Matrix DP & Knapsack Variants',
-              type: 'tactic',
-              description: 'Longest Common Subsequence (LCS), 0/1 Knapsack, Edit Distance, and Unique Grid Paths.',
-              complexity: 'Time: O(M * N) | Space: O(M * N)',
-              children: [
-                {
-                  id: 'kpi_5_2_1',
-                  label: '🛠️ Capstone: Algorithmic DNA Sequence Alignment',
-                  type: 'kpi',
-                  resourceType: 'project',
-                  author: 'Bioinformatics Guild',
-                  url: 'https://github.com/topics/sequence-alignment-python',
-                  description: 'Implement the Needleman-Wunsch 2D alignment matrix in Python.'
-                },
-                {
-                  id: 'kpi_5_2_2',
-                  label: '🎥 Video: 0/1 Knapsack Problem by Abdul Bari',
-                  type: 'kpi',
-                  resourceType: 'video',
-                  author: 'Abdul Bari',
-                  url: 'https://www.youtube.com/watch?v=nLmhmB6NzcM',
-                  description: 'Classic dynamic programming tabulation explanation with clear matrix traces.'
+                  url: 'https://neetcode.io/practice'
                 }
               ]
             }
@@ -387,190 +640,102 @@ function generateDynamicAITree(goal: string): GraphNodeTree {
     };
   }
 
-  // 2. Machine Learning Engineer
-  if (gLower.includes('machine learning') || gLower.includes('ml engineer') || gLower.includes('deep learning')) {
-    return {
-      id: 'root_ml',
-      label: 'Machine Learning Engineer',
-      type: 'root',
-      description: 'End-to-end Machine Learning curriculum covering Mathematical Foundations, Classical ML, Deep Learning with PyTorch, and Production MLOps.',
-      children: [
-        {
-          id: 'strat_ml_1',
-          label: '1. Mathematical Foundations',
-          type: 'strategy',
-          children: [
-            {
-              id: 'tact_ml_1_1',
-              label: 'Linear Algebra & Tensors',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_1_1_1', label: '📖 Book: Mathematics for Machine Learning', type: 'kpi', resourceType: 'book', author: 'Deisenroth, Faisal, Ong', url: 'https://mml-book.github.io/' },
-                { id: 'kpi_ml_1_1_2', label: '🎥 Video: 3Blue1Brown Essence of Linear Algebra', type: 'kpi', resourceType: 'video', author: '3Blue1Brown', url: 'https://www.3blue1brown.com/topics/linear-algebra' }
-              ]
-            },
-            {
-              id: 'tact_ml_1_2',
-              label: 'Multivariate Calculus & Optimization',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_1_2_1', label: '📖 Book: Deep Learning (Ch. 4 Numerical Computation)', type: 'kpi', resourceType: 'book', author: 'Goodfellow, Bengio', url: 'https://www.deeplearningbook.org/' },
-                { id: 'kpi_ml_1_2_2', label: '💻 Practice: Gradient Descent Simulator from Scratch', type: 'kpi', resourceType: 'interactive', author: 'AdaptiveLearn', url: 'https://github.com/topics/gradient-descent' }
-              ]
-            }
-          ]
-        },
-        {
-          id: 'strat_ml_2',
-          label: '2. Classical ML & Data Engineering',
-          type: 'strategy',
-          children: [
-            {
-              id: 'tact_ml_2_1',
-              label: 'Data Wrangling & Feature Engineering',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_2_1_1', label: '📖 Book: Python for Data Analysis', type: 'kpi', resourceType: 'book', author: 'Wes McKinney', url: 'https://wesmckinney.com/book/' },
-                { id: 'kpi_ml_2_1_2', label: '💻 Practice: Kaggle Titanic & Housing Price Predictors', type: 'kpi', resourceType: 'interactive', author: 'Kaggle', url: 'https://www.kaggle.com/competitions' }
-              ]
-            },
-            {
-              id: 'tact_ml_2_2',
-              label: 'Supervised Models (Regression, Trees, SVM)',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_2_2_1', label: '📖 Book: Hands-On Machine Learning with Scikit-Learn', type: 'kpi', resourceType: 'book', author: 'Aurélien Géron', url: 'https://www.oreilly.com/library/view/hands-on-machine-learning/9781098125967/' },
-                { id: 'kpi_ml_2_2_2', label: '🛠️ Capstone: End-to-End Churn Prediction Pipeline', type: 'kpi', resourceType: 'project', author: 'ML Guild', url: 'https://github.com/topics/churn-prediction' }
-              ]
-            }
-          ]
-        },
-        {
-          id: 'strat_ml_3',
-          label: '3. Deep Learning & Transformers',
-          type: 'strategy',
-          children: [
-            {
-              id: 'tact_ml_3_1',
-              label: 'Neural Networks & PyTorch Fundamentals',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_3_1_1', label: '📖 Book: Deep Learning with PyTorch', type: 'kpi', resourceType: 'book', author: 'Eli Stevens', url: 'https://pytorch.org/deep-learning-with-pytorch' },
-                { id: 'kpi_ml_3_1_2', label: '🎥 Video: Fast.ai Practical Deep Learning for Coders', type: 'kpi', resourceType: 'video', author: 'Jeremy Howard', url: 'https://course.fast.ai/' }
-              ]
-            },
-            {
-              id: 'tact_ml_3_2',
-              label: 'Transformer Architectures & Attention',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_ml_3_2_1', label: '📖 Book: Natural Language Processing with Transformers', type: 'kpi', resourceType: 'book', author: 'Lewis Tunstall', url: 'https://www.oreilly.com/library/view/natural-language-processing/9781098103231/' },
-                { id: 'kpi_ml_3_2_2', label: '🛠️ Capstone: Build a Mini-GPT from Scratch in PyTorch', type: 'kpi', resourceType: 'project', author: 'Andrej Karpathy', url: 'https://github.com/karpathy/nanoGPT' }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-  }
-
-  // 3. Full Stack Web Developer
-  if (gLower.includes('full stack') || gLower.includes('web dev') || gLower.includes('next.js') || gLower.includes('react')) {
-    return {
-      id: 'root_fs',
-      label: 'Full Stack Web Developer',
-      type: 'root',
-      description: 'Modern Full Stack engineering curriculum covering Frontend Architecture, Backend API Design, PostgreSQL Databases, and Cloud Deployment.',
-      children: [
-        {
-          id: 'strat_fs_1',
-          label: '1. Modern Frontend Architecture',
-          type: 'strategy',
-          children: [
-            {
-              id: 'tact_fs_1_1',
-              label: 'React & Next.js App Router',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_fs_1_1_1', label: '📖 Book: Learning React (2nd Edition)', type: 'kpi', resourceType: 'book', author: 'Alex Banks, Eve Porcello', url: 'https://www.oreilly.com/library/view/learning-react-2nd/9781492051718/' },
-                { id: 'kpi_fs_1_1_2', label: '💻 Docs: Next.js Official App Router Documentation', type: 'kpi', resourceType: 'docs', author: 'Vercel Team', url: 'https://nextjs.org/docs' }
-              ]
-            },
-            {
-              id: 'tact_fs_1_2',
-              label: 'TypeScript & State Management',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_fs_1_2_1', label: '📖 Book: Programming TypeScript', type: 'kpi', resourceType: 'book', author: 'Boris Cherny', url: 'https://www.oreilly.com/library/view/programming-typescript/9781492052739/' },
-                { id: 'kpi_fs_1_2_2', label: '🛠️ Capstone: Real-Time Kanban Board in TypeScript', type: 'kpi', resourceType: 'project', author: 'Open Source', url: 'https://github.com/topics/kanban-react' }
-              ]
-            }
-          ]
-        },
-        {
-          id: 'strat_fs_2',
-          label: '2. Backend APIs & Database Systems',
-          type: 'strategy',
-          children: [
-            {
-              id: 'tact_fs_2_1',
-              label: 'Node.js, REST & Server Actions',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_fs_2_1_1', label: '📖 Book: Node.js Design Patterns', type: 'kpi', resourceType: 'book', author: 'Mario Casciaro', url: 'https://www.nodejsdesignpatterns.com/' },
-                { id: 'kpi_fs_2_2_2', label: '💻 Practice: Secure JWT & Session Auth API Sandbox', type: 'kpi', resourceType: 'interactive', author: 'AdaptiveLearn', url: 'https://github.com/topics/jwt-auth' }
-              ]
-            },
-            {
-              id: 'tact_fs_2_2',
-              label: 'PostgreSQL & Fluxbase Relational Modeling',
-              type: 'tactic',
-              children: [
-                { id: 'kpi_fs_2_2_1', label: '📖 Book: Designing Data-Intensive Applications', type: 'kpi', resourceType: 'book', author: 'Martin Kleppmann', url: 'https://dataintensive.net/' },
-                { id: 'kpi_fs_2_2_2', label: '🛠️ Capstone: Multi-Tenant SaaS DB with Fluxbase', type: 'kpi', resourceType: 'project', author: 'Fluxbase Team', url: 'https://fluxbase.vercel.app' }
-              ]
-            }
-          ]
-        }
-      ]
-    };
-  }
-
-  // Generic Dynamic Custom Goal
-  const cleanGoal = goal.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  // Generalized N-branch synthesis for any custom goal (Rust, Cloud, Cybersecurity, Flutter, etc.)
+  const words = domain.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   return {
-    id: 'root_custom',
-    label: cleanGoal,
+    id: `root_${dLower.replace(/\s+/g, '_')}`,
+    label: words,
     type: 'root',
-    description: `Curated AI knowledge graph and modular prerequisite milestones for ${cleanGoal}.`,
+    level: 0,
+    description: `Complete AI-generated prerequisite knowledge graph for ${words}.`,
     children: [
       {
-        id: 'strat_c_1',
-        label: '1. Foundations & Core Concepts',
+        id: 'strat_gen_1',
+        label: `1. ${words} Fundamentals & Primitives`,
         type: 'strategy',
+        level: 1,
         children: [
           {
-            id: 'tact_c_1_1',
-            label: `${cleanGoal.split(' ')[0]} Syntax & Runtime`,
+            id: 'tact_gen_1_1',
+            label: `${words.split(' ')[0]} Syntax & Core Concepts`,
             type: 'tactic',
+            level: 2,
+            description: `Core syntax, memory model, execution runtime, and baseline primitives for ${words}.`,
             children: [
-              { id: 'kpi_c_1_1_1', label: `📖 Book: ${cleanGoal} Complete Reference Guide`, type: 'kpi', resourceType: 'book', author: 'Authoritative Authors', url: 'https://www.google.com/search?q=' + encodeURIComponent(cleanGoal + ' book') },
-              { id: 'kpi_c_1_1_2', label: `💻 Sandbox: Interactive Code Exercises`, type: 'kpi', resourceType: 'interactive', author: 'Community Curated', url: 'https://github.com/topics/' + encodeURIComponent(cleanGoal.toLowerCase().replace(/\s+/g, '-')) }
+              {
+                id: 'kpi_gen_1_1_1',
+                label: `📖 Textbook: The Definitive Guide to ${words}`,
+                type: 'kpi',
+                level: 3,
+                resourceType: 'book',
+                author: 'Industry Experts',
+                url: 'https://www.google.com/search?q=' + encodeURIComponent(`${words} textbook guide`),
+                description: `Authoritative textbook and foundational principles for ${words}.`
+              },
+              {
+                id: 'kpi_gen_1_1_2',
+                label: `💻 Interactive Sandbox: ${words.split(' ')[0]} Code Drills`,
+                type: 'kpi',
+                level: 3,
+                resourceType: 'interactive',
+                author: 'Community Sandbox',
+                url: 'https://github.com/topics/' + encodeURIComponent(dLower.replace(/\s+/g, '-')),
+                description: `Hands-on practice exercises and test cases.`
+              }
             ]
           }
         ]
       },
       {
-        id: 'strat_c_2',
-        label: '2. Advanced Architecture & Practice',
+        id: 'strat_gen_2',
+        label: `2. Architecture & Design Patterns`,
         type: 'strategy',
+        level: 1,
         children: [
           {
-            id: 'tact_c_2_1',
-            label: `${cleanGoal.split(' ')[0]} Production Systems`,
+            id: 'tact_gen_2_1',
+            label: `System Architecture & Integration`,
             type: 'tactic',
+            level: 2,
+            description: `Modularity, state management, API design, and asynchronous patterns.`,
             children: [
-              { id: 'kpi_c_2_1_1', label: `🛠️ Capstone: Production Project Implementation`, type: 'kpi', resourceType: 'project', author: 'Open Source Labs', url: 'https://github.com' }
+              {
+                id: 'kpi_gen_2_1_1',
+                label: `🛠️ Capstone: Production ${words.split(' ')[0]} Implementation`,
+                type: 'kpi',
+                level: 3,
+                resourceType: 'project',
+                author: 'Open Source Labs',
+                url: 'https://github.com',
+                description: `Build an end-to-end production capstone application.`
+              }
+            ]
+          }
+        ]
+      },
+      {
+        id: 'strat_gen_3',
+        label: `3. Advanced Optimization & Production`,
+        type: 'strategy',
+        level: 1,
+        children: [
+          {
+            id: 'tact_gen_3_1',
+            label: `Performance, Scaling & Security`,
+            type: 'tactic',
+            level: 2,
+            description: `Benchmarking, concurrency, error recovery, and cloud deployment pipelines.`,
+            children: [
+              {
+                id: 'kpi_gen_3_1_1',
+                label: `🎥 Masterclass: Enterprise ${words} at Scale`,
+                type: 'kpi',
+                level: 3,
+                resourceType: 'video',
+                author: 'Conference Keynotes',
+                url: 'https://www.youtube.com',
+                description: 'Deep dive into production case studies and latency optimization.'
+              }
             ]
           }
         ]

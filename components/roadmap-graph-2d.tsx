@@ -20,6 +20,7 @@ import {
   Compass,
   ArrowRight,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   Info
 } from 'lucide-react';
@@ -34,8 +35,7 @@ interface ConnectionLine {
   fromY: number;
   toX: number;
   toY: number;
-  fromType: string;
-  toType: string;
+  level: number;
 }
 
 interface RoadmapGraph2DProps {
@@ -54,17 +54,8 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
   const [treeData, setTreeData] = useState<GraphNodeTree | null>(null);
   const [lines, setLines] = useState<ConnectionLine[]>([]);
 
-  // State for expanded node IDs
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set([
-    'root_dsa',
-    'strat_1',
-    'strat_2',
-    'strat_3',
-    'tact_1_1',
-    'tact_1_2',
-    'tact_2_1'
-  ]));
-
+  // Set of all expanded node IDs
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [selectedNode, setSelectedNode] = useState<GraphNodeTree | null>(null);
   const [completedNodeIds, setCompletedNodeIds] = useState<Set<string>>(new Set());
 
@@ -72,19 +63,24 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
   const fetchGraphTree = async () => {
     try {
       setLoading(true);
-      const goal = roadmap?.target_role || roadmap?.target_goal || 'Data Structures & Algorithms in Python';
-      const res = await fetch(`/api/roadmaps/graph-tree?goal=${encodeURIComponent(goal)}`);
+      const goal = roadmap?.target_role || roadmap?.target_goal || '';
+      const url = goal 
+        ? `/api/roadmaps/graph-tree?goal=${encodeURIComponent(goal)}`
+        : `/api/roadmaps/graph-tree`;
+
+      const res = await fetch(url);
       const data = await res.json();
+
       if (data.tree) {
         setTreeData(data.tree);
+
+        // Expand root and all top-level strategy branches by default
         const initialExpanded = new Set<string>([data.tree.id]);
         if (data.tree.children) {
           data.tree.children.forEach((c: GraphNodeTree, idx: number) => {
-            if (idx < 3) {
-              initialExpanded.add(c.id);
-              if (c.children && c.children[0]) {
-                initialExpanded.add(c.children[0].id);
-              }
+            initialExpanded.add(c.id);
+            if (c.children && c.children[0]) {
+              initialExpanded.add(c.children[0].id);
             }
           });
         }
@@ -99,9 +95,9 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
 
   useEffect(() => {
     fetchGraphTree();
-  }, [roadmap?.target_role, roadmap?.target_goal]);
+  }, [roadmap?.id, roadmap?.target_role, roadmap?.target_goal]);
 
-  // Recalculate connecting SVG Bézier lines between all visible parent and child nodes
+  // Recalculate connecting SVG Bézier lines for all visible parent-child pairs recursively
   const calculateConnectingLines = useCallback(() => {
     if (!contentWrapperRef.current || !treeData) return;
 
@@ -109,7 +105,7 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
     const newLines: ConnectionLine[] = [];
 
     const traverse = (parent: GraphNodeTree) => {
-      if (!expandedNodes.has(parent.id) || !parent.children) return;
+      if (!expandedNodes.has(parent.id) || !parent.children || parent.children.length === 0) return;
 
       const parentEl = nodeRefs.current[parent.id];
       if (!parentEl) return;
@@ -132,8 +128,7 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
           fromY,
           toX,
           toY,
-          fromType: parent.type,
-          toType: child.type
+          level: parent.level ?? 0
         });
 
         traverse(child);
@@ -144,7 +139,7 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
     setLines(newLines);
   }, [treeData, expandedNodes, zoom]);
 
-  // Recalculate on any DOM layout shift, expansion, or resize
+  // Trigger recalculation on DOM layout shift, expansion, zoom, or window resize
   useEffect(() => {
     const timer = setTimeout(() => {
       calculateConnectingLines();
@@ -222,6 +217,161 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
     });
   };
 
+  /**
+   * Recursive Node Renderer supporting N arbitrary levels of branching
+   */
+  const renderRecursiveNode = (node: GraphNodeTree) => {
+    const isExpanded = expandedNodes.has(node.id);
+    const hasChildren = node.children && node.children.length > 0;
+    const isCompleted = completedNodeIds.has(node.id);
+    const level = node.level ?? 0;
+
+    // Node Styling by Recursive Level
+    // Level 0: Black Objective Pill
+    // Level 1: Yellow Strategy Pill
+    // Level 2: Purple Tactic Pill
+    // Level 3+: Green KPI / Resource Pill
+    let nodeCardClasses = '';
+    let badgeText = '';
+
+    if (level === 0) {
+      nodeCardClasses = cn(
+        "px-6 py-4 rounded-full bg-[#1e232a] text-white shadow-xl cursor-pointer transition-all duration-200 hover:scale-105 select-none flex items-center gap-3 border-2 border-neutral-700",
+        isExpanded ? "ring-4 ring-neutral-900/20" : ""
+      );
+      badgeText = 'Objective';
+    } else if (level === 1) {
+      nodeCardClasses = cn(
+        "w-60 px-4 py-3 rounded-2xl bg-[#facc15] text-[#1e1b4b] font-bold text-xs shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.03] select-none flex items-center justify-between border-2 border-[#eab308]",
+        isExpanded ? "ring-4 ring-amber-300/50 shadow-lg" : "",
+        isCompleted ? "bg-emerald-300 border-emerald-500" : ""
+      );
+      badgeText = 'Strategy Pillar';
+    } else if (level === 2) {
+      nodeCardClasses = cn(
+        "w-64 px-4 py-3 rounded-2xl bg-[#818cf8] text-white font-semibold text-xs shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.03] select-none flex items-center justify-between border-2 border-[#6366f1]",
+        isExpanded ? "ring-4 ring-indigo-300/50 shadow-lg" : "",
+        isCompleted ? "bg-emerald-600 border-emerald-500" : ""
+      );
+      badgeText = 'Tactic';
+    } else {
+      nodeCardClasses = cn(
+        "w-72 px-3.5 py-2.5 rounded-2xl bg-[#4ade80] text-[#064e3b] font-bold text-[11px] shadow-sm hover:shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.02] select-none flex items-center justify-between border-2 border-[#22c55e]",
+        isCompleted ? "bg-emerald-200 border-emerald-400" : ""
+      );
+      badgeText = 'KPI / Resource';
+    }
+
+    return (
+      <div key={node.id} className="flex items-center gap-12 sm:gap-16 relative">
+        {/* Node Card Element */}
+        <div
+          ref={el => { nodeRefs.current[node.id] = el; }}
+          onClick={() => {
+            if (hasChildren) toggleExpand(node.id);
+            setSelectedNode(node);
+          }}
+          className={nodeCardClasses}
+        >
+          {level === 0 ? (
+            <>
+              <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
+              <div>
+                <span className="text-[10px] font-mono text-neutral-400 block uppercase font-bold tracking-wider leading-none">
+                  {badgeText}
+                </span>
+                <span className="text-sm font-bold tracking-tight text-white block mt-0.5">
+                  {node.label}
+                </span>
+              </div>
+            </>
+          ) : level === 1 ? (
+            <>
+              <div className="overflow-hidden">
+                <span className="text-[9px] font-mono uppercase font-bold text-amber-900/70 block leading-none mb-0.5">
+                  {badgeText}
+                </span>
+                <span className="truncate block font-extrabold text-neutral-950">
+                  {node.label}
+                </span>
+              </div>
+              <div className="w-5 h-5 rounded-full bg-amber-300/80 text-amber-950 flex items-center justify-center text-[10px] shrink-0 font-mono font-bold">
+                {node.children?.length || 0}
+              </div>
+            </>
+          ) : level === 2 ? (
+            <>
+              <div className="flex items-center gap-2 overflow-hidden">
+                <button
+                  onClick={(e) => toggleComplete(node.id, e)}
+                  className="text-white/70 hover:text-white transition-colors shrink-0"
+                  title={isCompleted ? "Mark Incomplete" : "Mark Mastered"}
+                >
+                  {isCompleted ? (
+                    <CheckCircle2 className="w-4 h-4 text-white fill-white/20" />
+                  ) : (
+                    <Circle className="w-4 h-4" />
+                  )}
+                </button>
+                <div className="overflow-hidden">
+                  <span className="text-[9px] font-mono uppercase font-bold text-indigo-100/70 block leading-none mb-0.5">
+                    {badgeText}
+                  </span>
+                  <span className="truncate block text-white font-bold">
+                    {node.label}
+                  </span>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono bg-indigo-900/30 px-1.5 py-0.5 rounded-md text-indigo-100 shrink-0">
+                {node.children?.length || 0}
+              </span>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 overflow-hidden">
+                <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs shrink-0 shadow-2xs">
+                  {node.resourceType === 'book' ? <BookOpen className="w-3.5 h-3.5" /> :
+                   node.resourceType === 'video' ? <Video className="w-3.5 h-3.5" /> :
+                   <Code className="w-3.5 h-3.5" />}
+                </div>
+                <div className="overflow-hidden">
+                  <span className="truncate block font-extrabold text-neutral-900 leading-tight">
+                    {node.label}
+                  </span>
+                  {node.author && (
+                    <span className="text-[9px] font-mono text-emerald-800/80 truncate block">
+                      {node.author}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {node.url && (
+                <a
+                  href={node.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="p-1 rounded-md text-emerald-900 hover:bg-emerald-300/60 transition-colors shrink-0"
+                  title="Open Resource URL"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* RECURSIVE CHILD BRANCHES (Supporting arbitrary N children at depth level + 1) */}
+        {isExpanded && hasChildren && (
+          <div className="flex flex-col gap-6 shrink-0 relative">
+            {node.children!.map((childNode) => renderRecursiveNode(childNode))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (loading && !treeData) {
     return (
       <div className="py-24 text-center space-y-3">
@@ -253,14 +403,14 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <h2 className="text-sm font-bold text-neutral-900 tracking-tight">
-              2D Visual Tree with Bézier Connecting Branches
+              2D Visual Knowledge Mindmap (N-Branch AI Connected)
             </h2>
             <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-mono font-bold">
-              AI Connected
+              AI Synchronized
             </span>
           </div>
           <p className="text-xs text-neutral-500">
-            Interactive Mindmap: S-curve branches connect from Objective ➔ Strategy (Yellow) ➔ Tactic (Purple) ➔ KPI Resources (Green).
+            Interactive Tree: Branches connect dynamically from your Onboarding Goal ➔ Strategy (Yellow) ➔ Tactic (Purple) ➔ Books & KPIs (Green).
           </p>
         </div>
 
@@ -268,7 +418,7 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
         <div className="flex items-center gap-2">
           <div className="flex items-center bg-neutral-50 border border-neutral-200 rounded-xl p-1 shadow-2xs">
             <button
-              onClick={() => setZoom(prev => Math.max(0.5, prev - 0.1))}
+              onClick={() => setZoom(prev => Math.max(0.4, prev - 0.1))}
               className="p-1.5 rounded-lg hover:bg-neutral-200/70 text-neutral-700 transition-colors"
               title="Zoom Out"
             >
@@ -278,7 +428,7 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
               {Math.round(zoom * 100)}%
             </span>
             <button
-              onClick={() => setZoom(prev => Math.min(1.5, prev + 0.1))}
+              onClick={() => setZoom(prev => Math.min(1.6, prev + 0.1))}
               className="p-1.5 rounded-lg hover:bg-neutral-200/70 text-neutral-700 transition-colors"
               title="Zoom In"
             >
@@ -355,8 +505,8 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
               const pathData = `M ${line.fromX} ${line.fromY} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${line.toX} ${line.toY}`;
 
               const strokeColor = 
-                line.toType === 'strategy' ? 'url(#lineGradYellow)' :
-                line.toType === 'tactic' ? 'url(#lineGradPurple)' :
+                line.level === 0 ? 'url(#lineGradYellow)' :
+                line.level === 1 ? 'url(#lineGradPurple)' :
                 'url(#lineGradGreen)';
 
               return (
@@ -383,176 +533,9 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
             })}
           </svg>
 
-          {/* Node Hierarchy Layout (Objective ➔ Strategy ➔ Tactic ➔ KPI) */}
-          <div className="flex items-center gap-16 sm:gap-24 relative z-10">
-            {/* LEVEL 0: OBJECTIVE ROOT PILL (Dark Black Pill) */}
-            <div className="flex flex-col items-center shrink-0 relative">
-              <div
-                ref={el => { nodeRefs.current[treeData.id] = el; }}
-                onClick={() => {
-                  toggleExpand(treeData.id);
-                  setSelectedNode(treeData);
-                }}
-                className={cn(
-                  "px-6 py-4 rounded-full bg-[#1e232a] text-white shadow-xl cursor-pointer transition-all duration-200 hover:scale-105 select-none flex items-center gap-3 border-2 border-neutral-700 group",
-                  expandedNodes.has(treeData.id) ? "ring-4 ring-neutral-900/20" : ""
-                )}
-              >
-                <div className="w-3 h-3 rounded-full bg-emerald-400 animate-ping" />
-                <div>
-                  <span className="text-[10px] font-mono text-neutral-400 block uppercase font-bold tracking-wider leading-none">
-                    Objective
-                  </span>
-                  <span className="text-sm font-bold tracking-tight text-white block mt-0.5">
-                    {treeData.label}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* LEVEL 1: STRATEGY NODES (Yellow / Amber Pills) */}
-            {expandedNodes.has(treeData.id) && treeData.children && (
-              <div className="flex flex-col gap-10 shrink-0 relative">
-                {treeData.children.map((stratNode) => {
-                  const isStratExpanded = expandedNodes.has(stratNode.id);
-
-                  return (
-                    <div key={stratNode.id} className="flex items-center gap-14 sm:gap-20 relative">
-                      {/* Strategy Card */}
-                      <div
-                        ref={el => { nodeRefs.current[stratNode.id] = el; }}
-                        onClick={() => {
-                          toggleExpand(stratNode.id);
-                          setSelectedNode(stratNode);
-                        }}
-                        className={cn(
-                          "w-56 px-4 py-3 rounded-2xl bg-[#facc15] text-[#1e1b4b] font-bold text-xs shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.03] select-none flex items-center justify-between border-2 border-[#eab308] group",
-                          isStratExpanded ? "ring-4 ring-amber-300/50 shadow-lg" : ""
-                        )}
-                      >
-                        <div className="overflow-hidden">
-                          <span className="text-[9px] font-mono uppercase font-bold text-amber-900/70 block leading-none mb-0.5">
-                            Strategy Pillar
-                          </span>
-                          <span className="truncate block font-extrabold text-neutral-950">
-                            {stratNode.label}
-                          </span>
-                        </div>
-                        <div className="w-5 h-5 rounded-full bg-amber-300/80 text-amber-950 flex items-center justify-center text-[10px] shrink-0 font-mono font-bold">
-                          {stratNode.children?.length || 0}
-                        </div>
-                      </div>
-
-                      {/* LEVEL 2: TACTIC NODES (Purple / Indigo Pills) */}
-                      {isStratExpanded && stratNode.children && (
-                        <div className="flex flex-col gap-6 shrink-0 relative">
-                          {stratNode.children.map((tacticNode) => {
-                            const isTacticExpanded = expandedNodes.has(tacticNode.id);
-                            const isTacticCompleted = completedNodeIds.has(tacticNode.id);
-
-                            return (
-                              <div key={tacticNode.id} className="flex items-center gap-12 sm:gap-16 relative">
-                                {/* Tactic Card */}
-                                <div
-                                  ref={el => { nodeRefs.current[tacticNode.id] = el; }}
-                                  onClick={() => {
-                                    toggleExpand(tacticNode.id);
-                                    setSelectedNode(tacticNode);
-                                  }}
-                                  className={cn(
-                                    "w-64 px-4 py-3 rounded-2xl bg-[#818cf8] text-white font-semibold text-xs shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.03] select-none flex items-center justify-between border-2 border-[#6366f1] group",
-                                    isTacticExpanded ? "ring-4 ring-indigo-300/50 shadow-lg" : "",
-                                    isTacticCompleted ? "bg-emerald-600 border-emerald-500" : ""
-                                  )}
-                                >
-                                  <div className="flex items-center gap-2 overflow-hidden">
-                                    <button
-                                      onClick={(e) => toggleComplete(tacticNode.id, e)}
-                                      className="text-white/70 hover:text-white transition-colors shrink-0"
-                                      title={isTacticCompleted ? "Mark Incomplete" : "Mark Mastered"}
-                                    >
-                                      {isTacticCompleted ? (
-                                        <CheckCircle2 className="w-4 h-4 text-white fill-white/20" />
-                                      ) : (
-                                        <Circle className="w-4 h-4" />
-                                      )}
-                                    </button>
-                                    <div className="overflow-hidden">
-                                      <span className="text-[9px] font-mono uppercase font-bold text-indigo-100/70 block leading-none mb-0.5">
-                                        Tactic
-                                      </span>
-                                      <span className="truncate block text-white font-bold">
-                                        {tacticNode.label}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  <span className="text-[10px] font-mono bg-indigo-900/30 px-1.5 py-0.5 rounded-md text-indigo-100 shrink-0">
-                                    {tacticNode.children?.length || 0}
-                                  </span>
-                                </div>
-
-                                {/* LEVEL 3: KPI / RESOURCE NODES (Fresh Green Pills) */}
-                                {isTacticExpanded && tacticNode.children && (
-                                  <div className="flex flex-col gap-3 shrink-0 relative">
-                                    {tacticNode.children.map((kpiNode) => {
-                                      const isKpiComplete = completedNodeIds.has(kpiNode.id);
-
-                                      return (
-                                        <div
-                                          key={kpiNode.id}
-                                          ref={el => { nodeRefs.current[kpiNode.id] = el; }}
-                                          onClick={() => setSelectedNode(kpiNode)}
-                                          className={cn(
-                                            "w-72 px-3.5 py-2.5 rounded-2xl bg-[#4ade80] text-[#064e3b] font-bold text-[11px] shadow-sm hover:shadow-md cursor-pointer transition-all duration-200 hover:scale-[1.02] select-none flex items-center justify-between border-2 border-[#22c55e] group",
-                                            isKpiComplete ? "bg-emerald-200 border-emerald-400" : ""
-                                          )}
-                                        >
-                                          <div className="flex items-center gap-2 overflow-hidden">
-                                            <div className="w-6 h-6 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs shrink-0 shadow-2xs">
-                                              {kpiNode.resourceType === 'book' ? <BookOpen className="w-3.5 h-3.5" /> :
-                                               kpiNode.resourceType === 'video' ? <Video className="w-3.5 h-3.5" /> :
-                                               <Code className="w-3.5 h-3.5" />}
-                                            </div>
-                                            <div className="overflow-hidden">
-                                              <span className="truncate block font-extrabold text-neutral-900 leading-tight">
-                                                {kpiNode.label}
-                                              </span>
-                                              {kpiNode.author && (
-                                                <span className="text-[9px] font-mono text-emerald-800/80 truncate block">
-                                                  {kpiNode.author}
-                                                </span>
-                                              )}
-                                            </div>
-                                          </div>
-
-                                          {kpiNode.url && (
-                                            <a
-                                              href={kpiNode.url}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              onClick={e => e.stopPropagation()}
-                                              className="p-1 rounded-md text-emerald-900 hover:bg-emerald-300/60 transition-colors shrink-0"
-                                              title="Open Resource URL"
-                                            >
-                                              <ExternalLink className="w-3.5 h-3.5" />
-                                            </a>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+          {/* Recursive Node Hierarchy Render */}
+          <div className="relative z-10">
+            {renderRecursiveNode(treeData)}
           </div>
         </div>
       </div>
@@ -563,9 +546,9 @@ export function RoadmapGraph2D({ roadmap }: RoadmapGraph2DProps) {
           <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
             <span className={cn(
               "px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase",
-              selectedNode.type === 'root' ? "bg-neutral-900 text-white" :
-              selectedNode.type === 'strategy' ? "bg-amber-100 text-amber-900" :
-              selectedNode.type === 'tactic' ? "bg-indigo-100 text-indigo-900" :
+              selectedNode.level === 0 ? "bg-neutral-900 text-white" :
+              selectedNode.level === 1 ? "bg-amber-100 text-amber-900" :
+              selectedNode.level === 2 ? "bg-indigo-100 text-indigo-900" :
               "bg-emerald-100 text-emerald-900"
             )}>
               {selectedNode.type.toUpperCase()} Node Details
