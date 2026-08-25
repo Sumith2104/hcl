@@ -646,12 +646,21 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 • **Data Engineering**: Data Wrangling with Pandas & NumPy, Feature Scaling, Exploratory Analysis.
 • **Classical ML**: Supervised Learning (Regression, Trees, SVMs), Unsupervised Clustering.
 • **Deep Learning & MLOps**: Neural Networks with PyTorch, Transformer Architectures, Model Evaluation & Deployment.`;
-    } else if (lower.includes('ai application') || lower.includes('ai engineer') || lower.includes('generative ai')) {
-      pillars = `• **Foundation Model APIs**: AWS Bedrock (Claude 3.5 Sonnet, Amazon Nova), OpenAI, and Hugging Face integration.
-• **Vector Databases & RAG**: PostgreSQL pgvector, Pinecone, Hybrid Search, and Re-ranking models.
-• **Agentic Workflows**: Multi-step reasoning loops, autonomous tool invocation, and stateful memory guards.
-• **Production Deployment**: Streaming Server-Sent Events (SSE), cost governance token guards, and observability logging.
-• **Capstone Projects**: Autonomous Code Review Agent & Enterprise Document RAG Assistant.`;
+    } else if (
+      lower.includes('ai application') ||
+      lower.includes('ai engineer') ||
+      lower.includes('generative ai') ||
+      lower.includes('genai') ||
+      lower.includes('rag') ||
+      lower.includes('langchain') ||
+      lower.includes('bedrock') ||
+      lower.includes('llm')
+    ) {
+      pillars = `• **Foundation Model APIs**: AWS Bedrock (Claude 3.5 Sonnet, Amazon Nova), LangChain & LlamaIndex, OpenAI Integration.
+• **Vector Databases & RAG**: PostgreSQL pgvector, Pinecone, Hybrid Search, Chunking Strategies & Re-ranking.
+• **Agentic Workflows**: Multi-step reasoning loops, autonomous tool invocation, stateful memory guards, and LangGraph.
+• **Production Deployment**: Streaming Server-Sent Events (SSE), cost governance token guards, latency benchmarking, and observability.
+• **Capstone Projects**: Autonomous Code Review Agent & Enterprise Document RAG Assistant with Multi-Turn Conversational Memory.`;
     } else if (lower.includes('full stack') || lower.includes('fullstack') || lower.includes('web dev')) {
       pillars = `• **Frontend**: TypeScript, React, Next.js App Router, TailwindCSS, State Management.
 • **Backend & DB**: Node.js APIs, Server Actions, PostgreSQL / Fluxbase Database Schema Design.
@@ -688,6 +697,12 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       lower.includes('algorithm') ||
       lower.includes('machine learning') ||
       lower.includes('ml') ||
+      lower.includes('generative ai') ||
+      lower.includes('genai') ||
+      lower.includes('rag') ||
+      lower.includes('langchain') ||
+      lower.includes('bedrock') ||
+      lower.includes('llm') ||
       lower.includes('prompt engineer') ||
       lower.includes('prompt engineering') ||
       lower.includes('ai engineer') ||
@@ -715,11 +730,22 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
     // 1. Target Role & Goal Extraction: ALWAYS PRIORITIZE LATEST USER MESSAGE FIRST
     let targetRole = '';
 
-    // Check latest message (primary) directly
-    if (pLower.includes('prompt engineer') || pLower.includes('prompt engineering')) {
-      targetRole = 'Prompt Engineer';
-    } else if (pLower.includes('ai application engineer') || (pLower.includes('ai engineer') && !pLower.includes('prompt'))) {
+    // Check for AI / GenAI / LLM / RAG / Bedrock first!
+    if (
+      pLower.includes('generative ai') ||
+      pLower.includes('genai') ||
+      pLower.includes('rag') ||
+      pLower.includes('langchain') ||
+      pLower.includes('llamaindex') ||
+      pLower.includes('bedrock') ||
+      pLower.includes('llm') ||
+      pLower.includes('ai application') ||
+      pLower.includes('ai engineer') ||
+      pLower.includes('agentic ai')
+    ) {
       targetRole = 'AI Application Engineer';
+    } else if (pLower.includes('prompt engineer') || pLower.includes('prompt engineering')) {
+      targetRole = 'Prompt Engineer';
     } else if (pLower.includes('machine learning') || pLower.includes('ml engineer') || pLower.includes('deep learning')) {
       targetRole = 'Machine Learning Engineer';
     } else if (pLower.includes('data science') || pLower.includes('data scientist')) {
@@ -737,7 +763,14 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       else targetRole = 'Data Structures & Algorithms in Python';
     } else if (pLower.includes('aptitude') || pLower.includes('placement')) {
       targetRole = 'Campus Placement & Aptitude';
-    } else if (pLower.includes('cloud') || pLower.includes('devops') || pLower.includes('aws') || pLower.includes('docker') || pLower.includes('kubernetes')) {
+    } else if (
+      pLower.includes('cloud') ||
+      pLower.includes('devops') ||
+      pLower.includes('terraform') ||
+      pLower.includes('kubernetes') ||
+      pLower.includes('k8s') ||
+      (pLower.includes('aws') && !pLower.includes('bedrock'))
+    ) {
       targetRole = 'Cloud & DevOps Architect';
     } else if (pLower.includes('security') || pLower.includes('cyber') || pLower.includes('pentest')) {
       targetRole = 'Cybersecurity Specialist';
@@ -755,10 +788,20 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 
     // If latest message didn't specify a new role, fall back to historical fullUserText
     if (!targetRole) {
-      if (fullLower.includes('prompt engineer') || fullLower.includes('prompt engineering')) {
-        targetRole = 'Prompt Engineer';
-      } else if (fullLower.includes('ai application engineer') || fullLower.includes('ai engineer')) {
+      if (
+        fullLower.includes('generative ai') ||
+        fullLower.includes('genai') ||
+        fullLower.includes('rag') ||
+        fullLower.includes('langchain') ||
+        fullLower.includes('bedrock') ||
+        fullLower.includes('llm') ||
+        fullLower.includes('ai application') ||
+        fullLower.includes('ai engineer') ||
+        fullLower.includes('agentic ai')
+      ) {
         targetRole = 'AI Application Engineer';
+      } else if (fullLower.includes('prompt engineer') || fullLower.includes('prompt engineering')) {
+        targetRole = 'Prompt Engineer';
       } else if (fullLower.includes('machine learning') || fullLower.includes('ml engineer')) {
         targetRole = 'Machine Learning Engineer';
       } else if (fullLower.includes('backend') || fullLower.includes('back-end') || fullLower.includes('back end')) {
@@ -769,8 +812,10 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
         targetRole = 'Full Stack Web Developer';
       } else if (fullLower.includes('dsa') || fullLower.includes('data structure')) {
         targetRole = 'Data Structures & Algorithms in Python';
+      } else if (fullLower.includes('cloud') || fullLower.includes('devops')) {
+        targetRole = 'Cloud & DevOps Architect';
       } else {
-        const matchFull = fullUserText.match(/(?:i want to learn|i want to master|learn|master|road\s*map\s*for|i\s*need\s*(?:a\s*)?(?:complete\s*)?road\s*map\s*for)\s+([^,.\n?!]+)/i);
+        const matchFull = fullUserText.match(/(?:i want to learn|i want to master|learn|master|build|road\s*map\s*for|i\s*need\s*(?:a\s*)?(?:complete\s*)?road\s*map\s*for)\s+([^,.\n?!]+)/i);
         if (matchFull && matchFull[1].trim().length > 2) {
           targetRole = matchFull[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         } else {
