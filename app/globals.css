@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --radius: 0.75rem;
+  }
+
+  body {
+    @apply bg-neutral-50/60 text-neutral-900 antialiased selection:bg-neutral-900 selection:text-white min-h-screen;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Minimalist Clean Utilities */
+.minimal-card {
+  @apply bg-white border border-neutral-200/80 rounded-2xl shadow-[0_1px_3px_rgba(0,0,0,0.04)] transition-all duration-200;
+}
+
+.minimal-card:hover {
+  @apply border-neutral-300 shadow-[0_4px_12px_rgba(0,0,0,0.06)];
+}
+
+.minimal-card-flat {
+  @apply bg-white border border-neutral-200/80 rounded-2xl;
+}
+
+.btn-black {
+  @apply bg-neutral-900 hover:bg-neutral-800 active:bg-black text-white font-medium text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-all duration-150 shadow-sm active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2;
+}
+
+.btn-secondary {
+  @apply bg-neutral-100 hover:bg-neutral-200 text-neutral-900 font-medium text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-all duration-150 border border-neutral-200/80 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2;
+}
+
+.btn-outline {
+  @apply bg-white hover:bg-neutral-50 text-neutral-900 font-medium text-xs sm:text-sm px-4 py-2.5 rounded-xl transition-all duration-150 border border-neutral-200 active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2;
+}
+
+.minimal-input {
+  @apply bg-white border border-neutral-200 rounded-xl px-3.5 py-2.5 text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 text-xs sm:text-sm transition-all;
+}
+
+.badge-neutral {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-neutral-100 text-neutral-800 border border-neutral-200/60;
+}
+
+.badge-black {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-neutral-900 text-white;
+}
+
+.badge-success {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200/60;
+}
+
+/* Custom Minimal Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #e5e5e5;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #d4d4d4;
+}
