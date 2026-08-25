@@ -78,7 +78,7 @@ class GLMClient {
   }
 
   /**
-   * Invoke GLM 5.3 for natural conversational reasoning
+   * Invoke GLM models for natural conversational reasoning with agentic fallback
    */
   public async invokeChat(
     messages: GLMMessage[],
@@ -94,7 +94,16 @@ class GLMClient {
     }
     formattedMessages.push(...messages);
 
-    const modelsToTry = [this.model, 'glm-5', 'GLM-4-Plus', 'glm-4-plus'];
+    // Agentic Model Priority: Flagship reasoning -> Turbo agentic -> Air lightweight -> Base
+    const modelsToTry = [
+      this.model,          // glm-5.3 (flagship reasoning)
+      'glm-5-turbo',       // glm-5-turbo (fast agentic tool execution)
+      'glm-4.5-air',       // glm-4.5-air (cost-efficient agentic)
+      'glm-5',             // glm-5
+      'glm-4.5'            // glm-4.5
+    ];
+
+    let lastError = '';
 
     for (const modelName of modelsToTry) {
       try {
@@ -127,20 +136,14 @@ class GLMClient {
         }
 
         if (data.error) {
-          console.warn(`[GLM 5.3 API] Model ${modelName} returned:`, data.error);
+          lastError = data.error.message || `Code ${data.error.code}`;
           if (data.error.code === '1113') {
-            // Insufficient balance on account
-            return {
-              reply: '',
-              model: modelName,
-              latencyMs,
-              success: false,
-              error: 'GLM_QUOTA_EXHAUSTED: Account balance is 0 on open.bigmodel.cn (Code 1113). Please recharge tokens on BigModel platform.'
-            };
+            // Quota exhausted on account
+            continue;
           }
         }
       } catch (err) {
-        console.warn(`[GLM 5.3] Error calling ${modelName}:`, err);
+        lastError = (err as Error).message;
       }
     }
 
@@ -149,7 +152,7 @@ class GLMClient {
       model: this.model,
       latencyMs: Date.now() - startTime,
       success: false,
-      error: 'GLM API call failed'
+      error: `GLM_QUOTA_EXHAUSTED: Account balance is 0 on open.bigmodel.cn (Code 1113: ${lastError || '余额不足'}). Please top up credits on the Zhipu BigModel platform to activate live streaming.`
     };
   }
 }
