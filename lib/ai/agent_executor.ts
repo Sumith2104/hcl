@@ -99,7 +99,7 @@ Your mission:
             tool: 'glm_5_3_zhipu_ai',
             args: { model: glmRes.model },
             result: glmRes.error,
-            status: 'error'
+            status: 'failed'
           });
         }
       } catch (err) {
