@@ -17,7 +17,9 @@ import {
   Loader2, 
   Cpu, 
   ChevronRight,
-  RotateCcw
+  RotateCcw,
+  Terminal,
+  Activity
 } from 'lucide-react';
 import { ExtractedProfileData } from '@/lib/ai/goal_analyzer';
 import { useAuth } from '@/lib/auth/context';
@@ -25,6 +27,7 @@ import { useAuth } from '@/lib/auth/context';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  toolCalls?: Array<{ tool: string; args: any; result?: any }>;
 }
 
 export default function OnboardingPage() {
@@ -34,12 +37,12 @@ export default function OnboardingPage() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: `Hello ${user?.name || 'there'}! I'm your AI Learning Architect. To craft your personalized, deterministic learning path on Fluxbase, tell me:\n\n1. What role or career goal are you aiming for?\n2. What is your current technical background and skills?\n3. How many hours per week can you comfortably dedicate?`
+      content: `Hello ${user?.name || 'there'}! I'm your AI Learning Architect. To craft your personalized, deterministic learning path on Fluxbase, tell me:\n\n1. What role or career goal are you aiming for (e.g. Machine Learning Engineer, AI Engineer, Fullstack)?\n2. What is your current technical background and skills?\n3. How many hours per week can you comfortably dedicate?`
     }
   ]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [extracting, setExtracting] = useState(false);
+  const [agentSteps, setAgentSteps] = useState<any[]>([]);
   const [extractedProfile, setExtractedProfile] = useState<ExtractedProfileData | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState(0);
@@ -47,16 +50,16 @@ export default function OnboardingPage() {
 
   const quickTracks = [
     {
+      label: 'Machine Learning & MLOps Track',
+      text: 'I want to become a Machine Learning Engineer. I have intermediate Python and statistical background, and want to master Deep Learning, PyTorch, and MLOps pipelines over 14 hours/week for 16 weeks.'
+    },
+    {
       label: 'AI Application Engineer Track',
       text: 'I want to become an AI Application Engineer. I have intermediate Python and basic SQL knowledge, and want to learn LLM prompt engineering, RAG, and AWS deployment over 14 hours/week for 16 weeks.'
     },
     {
       label: 'Full Stack Next.js & Cloud Track',
       text: 'I want to become a Full Stack Developer. I have experience with JavaScript & HTML/CSS, and want to master TypeScript, Next.js, and cloud deployment over 12 weeks.'
-    },
-    {
-      label: 'Machine Learning & MLOps Track',
-      text: 'My goal is Machine Learning Engineer. I have intermediate Python and statistical background, and want to master Deep Learning, PyTorch, and MLOps pipelines.'
     }
   ];
 
@@ -70,31 +73,31 @@ export default function OnboardingPage() {
     setLoading(true);
 
     try {
-      // 1. Get conversational reply
+      // Execute Agentic reasoning loop with live Fluxbase database tool calling
       const chatRes = await fetch('/api/onboarding/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages })
+        body: JSON.stringify({ messages: newMessages, userId: activeUserId })
       });
       const chatData = await chatRes.json();
 
       if (chatData.reply) {
-        setMessages([...newMessages, { role: 'assistant', content: chatData.reply }]);
+        setMessages([
+          ...newMessages,
+          {
+            role: 'assistant',
+            content: chatData.reply,
+            toolCalls: chatData.toolCalls
+          }
+        ]);
       }
 
-      // 2. Extract structured profile in real-time
-      if (newMessages.filter(m => m.role === 'user').length >= 1) {
-        setExtracting(true);
-        const extractRes = await fetch('/api/onboarding/extract', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: newMessages })
-        });
-        const extractData = await extractRes.json();
-        if (extractData.success && extractData.data) {
-          setExtractedProfile(extractData.data);
-        }
-        setExtracting(false);
+      if (chatData.extractedProfile) {
+        setExtractedProfile(chatData.extractedProfile);
+      }
+
+      if (chatData.steps) {
+        setAgentSteps(chatData.steps);
       }
     } catch (err) {
       console.error('Error in onboarding turn:', err);
@@ -108,14 +111,14 @@ export default function OnboardingPage() {
 
     setGenerating(true);
     setGenerationProgress(20);
-    setGenerationStatus('Validating profile schema...');
+    setGenerationStatus('Validating profile schema in Fluxbase...');
 
     try {
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 500));
       setGenerationProgress(50);
-      setGenerationStatus('Computing skill gaps against role benchmarks...');
+      setGenerationStatus(`Computing skill gaps for ${extractedProfile.target_goal}...`);
 
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 500));
       setGenerationProgress(75);
       setGenerationStatus('Topological sorting prerequisite DAG graph...');
 
@@ -131,7 +134,7 @@ export default function OnboardingPage() {
       });
 
       setGenerationProgress(95);
-      setGenerationStatus('Persisting roadmap to Fluxbase...');
+      setGenerationStatus('Persisting sequenced roadmap to Fluxbase database...');
       const data = await res.json();
 
       if (data.success && data.roadmap) {
@@ -152,10 +155,11 @@ export default function OnboardingPage() {
     setMessages([
       {
         role: 'assistant',
-        content: `Hello ${user?.name || 'there'}! I'm your AI Learning Architect. To craft your personalized, deterministic learning path on Fluxbase, tell me:\n\n1. What role or career goal are you aiming for?\n2. What is your current technical background and skills?\n3. How many hours per week can you comfortably dedicate?`
+        content: `Hello ${user?.name || 'there'}! I'm your AI Learning Architect. To craft your personalized, deterministic learning path on Fluxbase, tell me:\n\n1. What role or career goal are you aiming for (e.g. Machine Learning Engineer, AI Engineer, Fullstack)?\n2. What is your current technical background and skills?\n3. How many hours per week can you comfortably dedicate?`
       }
     ]);
     setExtractedProfile(null);
+    setAgentSteps([]);
     setInput('');
   };
 
@@ -169,11 +173,11 @@ export default function OnboardingPage() {
               <Sparkles className="w-4 h-4" />
             </span>
             <h1 className="text-2xl font-bold text-neutral-900 tracking-tight">
-              AI Conversational Onboarding
+              Agentic AI Conversational Onboarding
             </h1>
           </div>
           <p className="text-xs sm:text-sm text-neutral-500 mt-1">
-            Chat with the AI architect to dynamically extract your baseline and build your DAG roadmap.
+            Autonomous agent analyzing your background, calling Fluxbase database tools, and building your DAG roadmap.
           </p>
         </div>
 
@@ -190,9 +194,9 @@ export default function OnboardingPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Chat Conversation */}
         <div className="lg:col-span-7 space-y-4">
-          <div className="minimal-card p-4 sm:p-6 space-y-4 min-h-[460px] flex flex-col justify-between">
+          <div className="minimal-card p-4 sm:p-6 space-y-4 min-h-[480px] flex flex-col justify-between">
             {/* Messages Scroll Area */}
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+            <div className="space-y-4 max-h-[420px] overflow-y-auto pr-2">
               {messages.map((m, idx) => (
                 <div
                   key={idx}
@@ -209,22 +213,40 @@ export default function OnboardingPage() {
                   >
                     {m.role === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
                   </div>
-                  <div
-                    className={`rounded-2xl p-3.5 text-xs sm:text-sm leading-relaxed max-w-[85%] whitespace-pre-wrap ${
-                      m.role === 'user'
-                        ? 'bg-neutral-900 text-white rounded-tr-none'
-                        : 'bg-neutral-100/90 text-neutral-900 rounded-tl-none border border-neutral-200/80'
-                    }`}
-                  >
-                    {m.content}
+
+                  <div className="space-y-1.5 max-w-[85%]">
+                    <div
+                      className={`rounded-2xl p-3.5 text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
+                        m.role === 'user'
+                          ? 'bg-neutral-900 text-white rounded-tr-none'
+                          : 'bg-neutral-100/90 text-neutral-900 rounded-tl-none border border-neutral-200/80'
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+
+                    {/* Agentic Tool Calls Badge */}
+                    {m.toolCalls && m.toolCalls.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {m.toolCalls.map((tc, tIdx) => (
+                          <span
+                            key={tIdx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-[10px] font-mono text-neutral-600"
+                          >
+                            <Terminal className="w-3 h-3 text-neutral-900" />
+                            <span>{tc.tool}</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
 
               {loading && (
-                <div className="flex items-center gap-2 text-neutral-400 text-xs font-mono py-2">
+                <div className="flex items-center gap-2 text-neutral-500 text-xs font-mono py-2">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-900" />
-                  <span>AI Architect is analyzing your input...</span>
+                  <span>Agent is executing Fluxbase database queries & analyzing profile...</span>
                 </div>
               )}
             </div>
@@ -263,7 +285,7 @@ export default function OnboardingPage() {
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  placeholder="Describe your learning goal, background, or weekly availability..."
+                  placeholder="Describe your learning goal (e.g. I want to learn machine learning so create roadmap)..."
                   disabled={loading || generating}
                   className="flex-1 minimal-input"
                 />
@@ -287,10 +309,8 @@ export default function OnboardingPage() {
                 <Target className="w-4 h-4 text-neutral-900" />
                 <h3 className="text-sm font-bold text-neutral-900">Extracted Profile</h3>
               </div>
-              {extracting ? (
-                <span className="badge-neutral animate-pulse">Extracting...</span>
-              ) : extractedProfile ? (
-                <span className="badge-success">Ready</span>
+              {extractedProfile ? (
+                <span className="badge-success">Agentic Synced</span>
               ) : (
                 <span className="text-[11px] text-neutral-400 font-mono">Listening</span>
               )}
@@ -299,8 +319,8 @@ export default function OnboardingPage() {
             {extractedProfile ? (
               <div className="space-y-4 text-xs">
                 {/* Target Role & Goal */}
-                <div className="p-3 rounded-xl bg-neutral-50 border border-neutral-200/80 space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-neutral-400">Target Goal</span>
+                <div className="p-3.5 rounded-xl bg-neutral-50 border border-neutral-200/80 space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-neutral-400">Target Role & Goal</span>
                   <p className="font-bold text-neutral-900 text-sm">{extractedProfile.target_goal}</p>
                   {extractedProfile.summary && (
                     <p className="text-neutral-600 text-xs leading-relaxed">{extractedProfile.summary}</p>

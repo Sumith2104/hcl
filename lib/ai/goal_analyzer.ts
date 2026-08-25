@@ -3,6 +3,7 @@ import { costGuard } from './cost_guard';
 import { fluxbase } from '../db/fluxbase';
 import { LearnerProfile, ExperienceLevel, LearningStyle } from '../db/schema';
 import { EXTRACTION_BEDROCK_MODEL } from '../aws/models';
+import { agenticEngine } from './agent_executor';
 
 export interface ExtractedProfileData {
   target_goal: string;
@@ -26,11 +27,13 @@ export class GoalAnalyzer {
   ): Promise<ExtractedProfileData> {
     await costGuard.checkBudget(userId);
 
-    const formattedTranscript = conversationHistory
-      .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-      .join('\n');
+    // If live AWS credentials available, invoke AWS Bedrock with JSON schema
+    if (bedrock.isLiveConfigured()) {
+      const formattedTranscript = conversationHistory
+        .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+        .join('\n');
 
-    const prompt = `You are the Learner Profiling Engine of an AI-powered Personalized Learning Platform.
+      const prompt = `You are the Learner Profiling Engine of an AI-powered Personalized Learning Platform.
 Analyze the following onboarding conversation transcript between a learner and the AI assistant:
 
 --- CONVERSATION TRANSCRIPT ---
@@ -39,7 +42,7 @@ ${formattedTranscript}
 
 Extract the learner's profile strictly according to this JSON structure:
 {
-  "target_goal": "String, target career role (e.g. AI Engineer, Machine Learning Engineer, Full Stack Developer, Data Scientist, etc.)",
+  "target_goal": "String, target career role (e.g. Machine Learning Engineer, AI Engineer, Full Stack Developer, Data Scientist, etc.)",
   "experience_level": "beginner | intermediate | advanced | expert",
   "available_hours_per_week": number (e.g. 10 to 25),
   "target_duration_weeks": number (e.g. 8 to 24),
@@ -52,46 +55,56 @@ Extract the learner's profile strictly according to this JSON structure:
   "summary": "Brief 1-2 sentence profile summary"
 }`;
 
-    const response = await bedrock.invokeJSON<ExtractedProfileData>(prompt, {
-      modelId: EXTRACTION_BEDROCK_MODEL,
-      temperature: 0.1,
-      userId
-    });
+      try {
+        const response = await bedrock.invokeJSON<ExtractedProfileData>(prompt, {
+          modelId: EXTRACTION_BEDROCK_MODEL,
+          temperature: 0.1,
+          userId
+        });
 
-    await costGuard.logUsage({
-      userId,
-      endpoint: 'onboarding/extract-profile',
-      model: response.modelId,
-      provider: response.provider,
-      inputTokens: response.inputTokens,
-      outputTokens: response.outputTokens,
-      estimatedCostUsd: response.costUsd,
-      latencyMs: response.latencyMs
-    });
+        await costGuard.logUsage({
+          userId,
+          endpoint: 'onboarding/extract',
+          model: response.modelId,
+          provider: response.provider,
+          inputTokens: response.inputTokens,
+          outputTokens: response.outputTokens,
+          estimatedCostUsd: response.costUsd,
+          latencyMs: response.latencyMs
+        });
 
-    return response.result;
+        return response.result;
+      } catch (err) {
+        console.warn('Bedrock extraction failed, executing Agentic Engine fallback:', (err as Error).message);
+      }
+    }
+
+    // Agentic Engine with live Fluxbase database queries
+    const agenticRes = await agenticEngine.executeOnboardingAgent(conversationHistory, userId);
+    return agenticRes.extractedProfile;
   }
 
-  public async mapToLearnerProfile(
-    extracted: ExtractedProfileData,
-    userId: string
-  ): Promise<LearnerProfile> {
-    const profile: LearnerProfile = {
-      id: `prof_${Date.now()}`,
+  public toLearnerProfile(
+    userId: string,
+    extractedData: ExtractedProfileData
+  ): LearnerProfile {
+    const rawSkills = extractedData.current_skills.map(
+      s => `${s.skill} (${s.level})`
+    );
+
+    return {
+      id: `prof_${userId}`,
       user_id: userId,
-      target_goal: extracted.target_goal,
-      experience_level: extracted.experience_level,
-      available_hours_per_week: extracted.available_hours_per_week || 14,
-      preferred_learning_style: extracted.preferred_learning_style || 'hands-on',
-      interests: extracted.interests || ['AI', 'Engineering'],
-      target_duration_weeks: extracted.target_duration_weeks || 16,
-      current_skills_raw: extracted.current_skills.map(s => `${s.skill} (${s.level})`),
+      target_goal: extractedData.target_goal,
+      experience_level: extractedData.experience_level,
+      available_hours_per_week: extractedData.available_hours_per_week,
+      preferred_learning_style: extractedData.preferred_learning_style,
+      interests: extractedData.interests,
+      target_duration_weeks: extractedData.target_duration_weeks,
+      current_skills_raw: rawSkills,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-
-    await fluxbase.saveProfile(profile);
-    return profile;
   }
 }
 

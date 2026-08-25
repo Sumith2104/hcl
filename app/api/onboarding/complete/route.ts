@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { goalAnalyzer, ExtractedProfileData } from '@/lib/ai/goal_analyzer';
 import { orchestrator } from '@/lib/ai/orchestrator';
+import { fluxbase } from '@/lib/db/fluxbase';
+
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
@@ -10,7 +13,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Profile data is required' }, { status: 400 });
     }
 
-    const savedProfile = await goalAnalyzer.mapToLearnerProfile(profileData as ExtractedProfileData, userId);
+    const learnerProfile = goalAnalyzer.toLearnerProfile(userId, profileData as ExtractedProfileData);
+    const savedProfile = await fluxbase.saveProfile(learnerProfile);
 
     let roadmap = null;
     if (generateRoadmap) {

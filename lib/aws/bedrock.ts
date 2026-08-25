@@ -55,6 +55,10 @@ class BedrockService {
     }
   }
 
+  public isLiveConfigured(): boolean {
+    return this.isConfigured;
+  }
+
   public getStatus() {
     return {
       isConfigured: this.isConfigured,
