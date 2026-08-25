@@ -3,6 +3,7 @@ import { ExtractedProfileData } from './goal_analyzer';
 import { bedrock } from '../aws/bedrock';
 import { glm } from './glm_client';
 import { openLLM } from './open_llm_client';
+import { gemini } from './gemini_client';
 import { ExperienceLevel, LearningStyle } from '../db/schema';
 
 export interface AgentExecutionResult {
@@ -62,16 +63,45 @@ export class AgenticEngine {
       }).catch(() => {});
     }
 
-    // 1. Check Open-Source Agentic Models (Groq Llama 3.3 70B, OpenRouter Free, Local Ollama)
-    try {
-      const systemPrompt = `You are the empathetic, expert AI Learning Architect.
+    const systemPrompt = `You are the empathetic, expert AI Learning Architect.
 Your mission:
 1. Converse naturally, dynamically, and empathetically with the learner.
 2. Ask diagnostic questions when a learner introduces a new goal without specifying their schedule or background.
 3. Validate their requests (feasibility, hours, experience level) and provide structured, tailored curriculum recommendations.
-4. When the user asks for Backend Developer, focus exclusively on Backend (APIs, Databases, Caching, Queues, Security).
+4. When the user asks for Python or Backend or AI, focus strictly on their chosen domain without generic templates.
 5. Always write clean, formatted markdown.`;
 
+    // 1. Check Google Gemini (Free Tier / Live LLM)
+    if (gemini.isConfigured()) {
+      try {
+        const geminiRes = await gemini.generateContent(
+          conversation.map(m => ({ role: m.role as any, content: m.content })),
+          systemPrompt
+        );
+
+        if (geminiRes.success && geminiRes.reply) {
+          toolCalls.push({
+            tool: 'google_gemini',
+            args: { model: geminiRes.model, latencyMs: geminiRes.latencyMs },
+            result: `Live completion from Google ${geminiRes.model}`,
+            status: 'success'
+          });
+
+          return {
+            reply: geminiRes.reply,
+            steps: [{ thought: `Generated dynamic reasoning via Google ${geminiRes.model}.` }],
+            toolCalls,
+            extractedProfile,
+            isReadyToBuild: hasGoal
+          };
+        }
+      } catch (err) {
+        console.warn('Gemini call failed:', err);
+      }
+    }
+
+    // 2. Check Open-Source Agentic Models (Groq Llama 3.3 70B, OpenRouter Free, Local Ollama)
+    try {
       const llmRes = await openLLM.generateCompletion(
         conversation.map(m => ({ role: m.role as any, content: m.content })),
         systemPrompt
