@@ -130,15 +130,60 @@ export default function RoadmapPage() {
 
   if (!roadmap || !roadmap.items || roadmap.items.length === 0) {
     return (
-      <div className="minimal-card p-12 text-center space-y-4 max-w-lg mx-auto my-12">
-        <Compass className="w-12 h-12 text-neutral-400 mx-auto" />
-        <h2 className="text-xl font-bold text-neutral-900">No Active Roadmap Found</h2>
-        <p className="text-xs text-neutral-600 leading-relaxed">
-          Complete the AI onboarding to generate your personalized deterministic learning path.
-        </p>
-        <a href="/onboarding" className="btn-black inline-flex">
-          Start AI Onboarding
-        </a>
+      <div className="minimal-card p-12 text-center space-y-5 max-w-lg mx-auto my-12">
+        <div className="w-14 h-14 rounded-2xl bg-neutral-100 flex items-center justify-center text-neutral-800 mx-auto">
+          <Compass className="w-7 h-7" />
+        </div>
+        <div className="space-y-1.5">
+          <h2 className="text-xl font-bold text-neutral-900">No Active Roadmap Found</h2>
+          <p className="text-xs text-neutral-500 leading-relaxed max-w-sm mx-auto">
+            Complete the conversational AI onboarding to dynamically extract your baseline and generate your personalized DAG roadmap.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-2">
+          <a href="/onboarding" className="btn-black w-full sm:w-auto inline-flex items-center justify-center gap-2">
+            <Sparkles className="w-4 h-4" />
+            <span>Start AI Onboarding</span>
+          </a>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const res = await fetch('/api/onboarding/complete', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    profileData: {
+                      target_goal: 'Machine Learning Engineer',
+                      experience_level: 'intermediate',
+                      available_hours_per_week: 14,
+                      target_duration_weeks: 16,
+                      preferred_learning_style: 'hands-on',
+                      interests: ['Machine Learning', 'Deep Learning', 'PyTorch', 'MLOps'],
+                      current_skills: [{ skill: 'Python Programming', level: 'intermediate' }],
+                      confidence_assessment: 0.92,
+                      summary: 'Machine Learning Engineer track calibrated for intermediate Python.'
+                    },
+                    userId: activeUserId,
+                    generateRoadmap: true
+                  })
+                });
+                const data = await res.json();
+                if (data.roadmap) {
+                  setRoadmap(data.roadmap);
+                }
+              } catch (err) {
+                console.error(err);
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="btn-outline w-full sm:w-auto inline-flex items-center justify-center gap-1.5"
+          >
+            <Zap className="w-3.5 h-3.5 text-neutral-900" />
+            <span>Generate ML Track</span>
+          </button>
+        </div>
       </div>
     );
   }
