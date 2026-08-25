@@ -32,13 +32,28 @@ export function Navbar() {
     <header className="sticky top-0 z-50 w-full border-b border-neutral-200/80 bg-white/90 backdrop-blur-md">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         {/* Brand Logo */}
-        <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="w-8 h-8 rounded-lg bg-neutral-900 flex items-center justify-center text-white shadow-sm group-hover:bg-neutral-800 transition-colors">
-            <Sparkles className="w-4 h-4 text-white" />
+        <Link href="/" className="flex items-center gap-2.5 group shrink-0">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-neutral-900 via-neutral-800 to-indigo-950 flex items-center justify-center text-white shadow-sm border border-neutral-800/80 group-hover:scale-105 transition-all shrink-0">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-4.5 h-4.5 text-indigo-400 shrink-0"
+              style={{ width: '18px', height: '18px', display: 'block' }}
+            >
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
           </div>
           <div>
             <span className="font-bold text-base tracking-tight text-neutral-900">
-              AdaptiveLearn
+              Adaptive<span className="text-indigo-600">Learn</span>
             </span>
           </div>
         </Link>
@@ -72,59 +87,69 @@ export function Navbar() {
             <div className="relative">
               <button
                 onClick={() => setDropdownOpen(!dropdownOpen)}
-                className="flex items-center gap-2.5 pl-2 pr-3 py-1.5 rounded-xl border border-neutral-200 hover:border-neutral-300 bg-white shadow-sm transition-all"
+                className={cn(
+                  "w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-semibold shadow-sm hover:ring-2 hover:ring-neutral-300 transition-all focus:outline-none cursor-pointer",
+                  dropdownOpen ? "ring-2 ring-neutral-900" : ""
+                )}
+                aria-label="User Profile"
+                title="Open profile menu"
               >
-                <div className="w-6 h-6 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-semibold">
-                  {user.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="text-left hidden sm:block">
-                  <p className="text-xs font-semibold text-neutral-900 leading-none">{user.name}</p>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
+                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
               </button>
 
-              {/* Minimal Dropdown Menu */}
+              {/* Dropdown Menu with Backdrop */}
               {dropdownOpen && (
-                <div className="absolute right-0 mt-2 w-48 rounded-xl bg-white border border-neutral-200 p-1.5 shadow-lg space-y-0.5 animate-in fade-in zoom-in-95 z-50">
-                  <div className="px-3 py-2 border-b border-neutral-100 mb-1">
-                    <p className="text-xs font-bold text-neutral-900">{user.name}</p>
-                    <p className="text-[11px] text-neutral-500 truncate">{user.email}</p>
+                <>
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setDropdownOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-52 rounded-xl bg-white border border-neutral-200 p-1.5 shadow-xl space-y-0.5 animate-in fade-in zoom-in-95 z-50">
+                    <div className="px-3 py-2 border-b border-neutral-100 mb-1 flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                        {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                      </div>
+                      <div className="overflow-hidden">
+                        <p className="text-xs font-bold text-neutral-900 truncate">{user.name}</p>
+                        <p className="text-[11px] text-neutral-500 truncate">{user.email}</p>
+                      </div>
+                    </div>
+                    <Link
+                      href="/dashboard"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+                    >
+                      <LayoutDashboard className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>Dashboard</span>
+                    </Link>
+                    <Link
+                      href="/roadmap"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+                    >
+                      <Compass className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>My Roadmap</span>
+                    </Link>
+                    <Link
+                      href="/assistant"
+                      onClick={() => setDropdownOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+                    >
+                      <Bot className="w-3.5 h-3.5 text-neutral-600" />
+                      <span>AI Mentor</span>
+                    </Link>
+                    <button
+                      onClick={() => {
+                        setDropdownOpen(false);
+                        logout();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors text-left cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign Out</span>
+                    </button>
                   </div>
-                  <Link
-                    href="/dashboard"
-                    onClick={() => setDropdownOpen(false)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
-                  >
-                    <LayoutDashboard className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>Dashboard</span>
-                  </Link>
-                  <Link
-                    href="/roadmap"
-                    onClick={() => setDropdownOpen(false)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
-                  >
-                    <Compass className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>My Roadmap</span>
-                  </Link>
-                  <Link
-                    href="/assistant"
-                    onClick={() => setDropdownOpen(false)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
-                  >
-                    <Bot className="w-3.5 h-3.5 text-neutral-600" />
-                    <span>AI Mentor</span>
-                  </Link>
-                  <button
-                    onClick={() => {
-                      setDropdownOpen(false);
-                      logout();
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-rose-600 hover:bg-rose-50 transition-colors text-left"
-                  >
-                    <LogOut className="w-3.5 h-3.5" />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
+                </>
               )}
             </div>
           ) : (
