@@ -566,19 +566,29 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 
   private respondToPlanChange(lastUserMessage: string, profile: ExtractedProfileData, state: ReturnType<typeof AgenticEngine.prototype.analyzeConversationState>): string {
     const previousGoal = state.lastAnnouncedGoal;
-    const pivotNote = previousGoal
-      ? `Understood! Pivoting from **${previousGoal}** → **${profile.target_goal}**! 🔄🎯\n\n`
-      : `Understood! Setting your new goal to **${profile.target_goal}**! 🔄🎯\n\n`;
-
-    // Check if user also provided hours or background in this turn
     const lower = lastUserMessage.toLowerCase();
     const hasDetails = /\d+\s*(?:hours?|hrs?|h)/i.test(lower) || /(beginner|intermediate|advanced|expert|know python)/i.test(lower);
 
     if (hasDetails || state.allKeyDetailsProvided) {
-      return pivotNote + this.respondToAnswerAndValidate(lastUserMessage, profile, state);
+      const prefix = previousGoal
+        ? `Understood! Pivoting from **${previousGoal}** to **${profile.target_goal}**! 🔄🎯\n\n`
+        : `Understood! Setting your goal to **${profile.target_goal}**! 🎯\n\n`;
+      return prefix + this.respondToAnswerAndValidate(lastUserMessage, profile, state);
     }
 
-    return pivotNote + this.askDiagnosticQuestions(profile);
+    const pivotNote = previousGoal
+      ? `Understood! Pivoting your roadmap from **${previousGoal}** to **${profile.target_goal}**! 🔄🎯`
+      : `Great choice! Setting your personalized track to **${profile.target_goal}**! 🚀🎯`;
+
+    return `${pivotNote}
+
+To calibrate your personalized prerequisite sequence and schedule, let me ask **3 quick diagnostic questions**:
+
+1. 📊 **Current Technical Background**: Are you starting from scratch, or do you already know basic programming or tools?
+2. ⏰ **Weekly Time Commitment**: How many hours per week can you dedicate (e.g. *8 hrs, 16 hrs, 25 hrs/week*)?
+3. 🛠️ **Preferred Learning Style**: Do you prefer *hands-on coding drills & projects*, *video walkthroughs*, or *reading technical documentation*?
+
+*(Feel free to reply in one sentence, e.g. "beginner, 12 hours/week, prefer hands-on")*`;
   }
 
   private respondToQuestion(
@@ -622,6 +632,13 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
 • **RAG & Agentic Tool Use**: Vector Semantic Embeddings, Chunking Strategies, DSPy Automated Prompt Optimization, and AWS Bedrock Function Calling.
 • **Evaluation, Safety & Red-Teaming**: Prompt Injection Defense, Jailbreak Mitigation, Hallucination Benchmarks, and LLM-as-a-Judge Eval Pipelines.
 • **Capstone Projects**: Build an Automated DSPy Prompt Optimizer and a Multi-Agent RAG Support Bot.`;
+    } else if (lower.includes('python') && !lower.includes('dsa') && !lower.includes('data structures')) {
+      pillars = `• **Python Core & Memory Model**: Variables, Primitive Types, Dynamic Typing, Mutable vs Immutable, Memory Allocation & Garbage Collection.
+• **Data Structures & Idioms**: Lists, Dictionaries, Sets, Tuples, List/Dict Comprehensions, Slicing, and \`collections\` module.
+• **Object-Oriented & Functional Python**: Classes, Inheritance, Dunder Methods (\`__init__\`, \`__repr__\`), Iterators, Generators (\`yield\`), Decorators, and Context Managers.
+• **Standard Library & I/O**: File I/O, JSON Serialization, \`pathlib\`, Regular Expressions, and Multi-threading vs Multi-processing.
+• **Production Engineering & Testing**: Unit Testing with \`pytest\`, Static Typing with \`mypy\`, Packaging, and Async I/O with \`asyncio\`.
+• **Capstone Projects**: High-Performance Asynchronous Web Scraper & Multi-threaded Task Queue Engine.`;
     } else if (lower.includes('backend') || lower.includes('back-end') || lower.includes('back end')) {
       pillars = `• **API Architecture & Protocols**: RESTful APIs, GraphQL Schema Design, gRPC, WebSockets, HTTP/2 & HTTP/3.
 • **Database Engineering & Caching**: PostgreSQL Relational Modeling, Redis In-Memory Caching, Indexes (B-Tree/Hash), ACID Transactions, Connection Pooling.
@@ -761,6 +778,20 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       else if (pLower.includes('java')) targetRole = 'Data Structures & Algorithms in Java';
       else if (pLower.includes('c++') || pLower.includes('cpp')) targetRole = 'Data Structures & Algorithms in C++';
       else targetRole = 'Data Structures & Algorithms in Python';
+    } else if (pLower.includes('python')) {
+      targetRole = 'Python Programming (Zero to Mastery)';
+    } else if (pLower.includes('javascript') || pLower.includes('typescript')) {
+      targetRole = 'TypeScript & Modern JavaScript';
+    } else if (pLower.includes('react') || pLower.includes('next.js') || pLower.includes('nextjs')) {
+      targetRole = 'React & Next.js Frontend Developer';
+    } else if (pLower.includes('java') && !pLower.includes('javascript')) {
+      targetRole = 'Java Enterprise & System Development';
+    } else if (pLower.includes('c++') || pLower.includes('cpp')) {
+      targetRole = 'C++ High-Performance Systems';
+    } else if (pLower.includes('golang') || pLower.includes('go lang')) {
+      targetRole = 'Go Backend Engineering';
+    } else if (pLower.includes('rust')) {
+      targetRole = 'Rust Systems Engineer';
     } else if (pLower.includes('aptitude') || pLower.includes('placement')) {
       targetRole = 'Campus Placement & Aptitude';
     } else if (
@@ -774,19 +805,11 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       targetRole = 'Cloud & DevOps Architect';
     } else if (pLower.includes('security') || pLower.includes('cyber') || pLower.includes('pentest')) {
       targetRole = 'Cybersecurity Specialist';
-    } else if (pLower.includes('rust') || pLower.includes('systems programming')) {
-      targetRole = 'Rust Systems Engineer';
     } else if (pLower.includes('mobile') || pLower.includes('flutter') || pLower.includes('react native') || pLower.includes('ios') || pLower.includes('android')) {
       targetRole = 'Mobile App Developer';
-    } else {
-      // Robust Regex on primary to catch "i need road map for X", "change of plan i need road map for X", "switch to X", etc.
-      const match = primary.match(/(?:i want to learn|i want to master|learn|master|build|road\s*map\s*for|switch\s*to|change\s*of\s*plan\s*(?:i\s*need\s*)?(?:road\s*map\s*for)?|i\s*need\s*(?:a\s*)?(?:complete\s*)?road\s*map\s*for)\s+([^,.\n?!]+)/i);
-      if (match && match[1].trim().length > 2) {
-        targetRole = match[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-      }
     }
 
-    // If latest message didn't specify a new role, fall back to historical fullUserText
+    // If latest message didn't specify a new role, check conversation history
     if (!targetRole) {
       if (
         fullLower.includes('generative ai') ||
@@ -812,21 +835,33 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
         targetRole = 'Full Stack Web Developer';
       } else if (fullLower.includes('dsa') || fullLower.includes('data structure')) {
         targetRole = 'Data Structures & Algorithms in Python';
+      } else if (fullLower.includes('python')) {
+        targetRole = 'Python Programming (Zero to Mastery)';
+      } else if (fullLower.includes('javascript') || fullLower.includes('typescript')) {
+        targetRole = 'TypeScript & Modern JavaScript';
+      } else if (fullLower.includes('react') || fullLower.includes('next.js')) {
+        targetRole = 'React & Next.js Frontend Developer';
       } else if (fullLower.includes('cloud') || fullLower.includes('devops')) {
         targetRole = 'Cloud & DevOps Architect';
+      } else if (fullLower.includes('security') || fullLower.includes('cyber')) {
+        targetRole = 'Cybersecurity Specialist';
       } else {
-        const matchFull = fullUserText.match(/(?:i want to learn|i want to master|learn|master|build|road\s*map\s*for|i\s*need\s*(?:a\s*)?(?:complete\s*)?road\s*map\s*for)\s+([^,.\n?!]+)/i);
-        if (matchFull && matchFull[1].trim().length > 2) {
-          targetRole = matchFull[1].trim().split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        } else {
-          targetRole = 'Backend Developer';
-        }
+        targetRole = 'Python Programming (Zero to Mastery)';
       }
     }
 
     // 2. Experience Level: Check latest message first, then fallback
     let experienceLevel: ExperienceLevel = 'intermediate';
-    if (pLower.includes('beginner') || pLower.includes('no experience') || pLower.includes('scratch') || pLower.includes('zero')) {
+    if (
+      pLower.includes('0 to master') ||
+      pLower.includes('0 to 1') ||
+      pLower.includes('zero to hero') ||
+      pLower.includes('beginner') ||
+      pLower.includes('no experience') ||
+      pLower.includes('scratch') ||
+      pLower.includes('zero') ||
+      pLower.includes('starting out')
+    ) {
       experienceLevel = 'beginner';
     } else if (pLower.includes('expert') || pLower.includes('senior') || pLower.includes('advanced') || pLower.includes('5 years')) {
       experienceLevel = 'expert';
@@ -834,7 +869,14 @@ Your profile is validated and synced with Fluxbase. Click **"Build Deterministic
       experienceLevel = 'intermediate';
     } else {
       // Historical fallback
-      if (fullLower.includes('beginner') || fullLower.includes('no experience') || fullLower.includes('scratch') || fullLower.includes('zero')) {
+      if (
+        fullLower.includes('0 to master') ||
+        fullLower.includes('zero to hero') ||
+        fullLower.includes('beginner') ||
+        fullLower.includes('no experience') ||
+        fullLower.includes('scratch') ||
+        fullLower.includes('zero')
+      ) {
         experienceLevel = 'beginner';
       } else if (fullLower.includes('expert') || fullLower.includes('senior') || fullLower.includes('advanced')) {
         experienceLevel = 'expert';
