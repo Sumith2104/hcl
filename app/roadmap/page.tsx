@@ -208,7 +208,6 @@ export default function RoadmapPage() {
         <div>
           <div className="flex items-center gap-2">
             <span className="badge-black">Deterministic DAG</span>
-            <span className="text-xs font-mono text-neutral-500">Fluxbase ID: {roadmap.id.slice(0, 12)}</span>
           </div>
           <h1 className="text-2xl font-bold text-neutral-900 tracking-tight mt-1">
             {roadmap.target_role}
