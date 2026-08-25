@@ -22,9 +22,12 @@ export interface AdaptationResult {
 
 export class AdaptationEngine {
   public async adaptRoadmap(request: AdaptationRequest): Promise<AdaptationResult> {
-    const roadmap = await fluxbase.getRoadmapById(request.roadmapId);
+    let roadmap = await fluxbase.getRoadmapById(request.roadmapId);
     if (!roadmap) {
-      throw new Error(`Roadmap with ID ${request.roadmapId} not found.`);
+      roadmap = await fluxbase.getActiveRoadmap(request.userId);
+    }
+    if (!roadmap) {
+      throw new Error(`Active roadmap for user ${request.userId} or ID ${request.roadmapId} not found.`);
     }
 
     await costGuard.checkBudget(request.userId);
