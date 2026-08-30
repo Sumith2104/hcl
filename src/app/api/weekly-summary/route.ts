@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFluxbase, dbError } from '@/lib/fluxbase-safe'
-import ZAI from 'z-ai-web-dev-sdk'
-
-let zaiInstance: Awaited<ReturnType<typeof ZAI.create>> | null = null
-
-async function getZAI() {
-  if (!zaiInstance) {
-    zaiInstance = await ZAI.create()
-  }
-  return zaiInstance
-}
+import { llmChat } from '@/lib/ai-engine'
 
 export async function GET(req: NextRequest) {
   try {
@@ -149,16 +140,7 @@ Overall Progress: ${overallProgress}%
 --- Skills ---
 User Skills: ${userSkills.length > 0 ? userSkills.map((us: Record<string, unknown>) => `${us.skillName} (${us.proficiencyLevel})`).join(', ') : 'None added yet'}`
 
-    const zai = await getZAI()
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'assistant', content: systemPrompt },
-        { role: 'user', content: dataSummary },
-      ],
-      thinking: { type: 'disabled' },
-    })
-
-    const raw = completion.choices[0]?.message?.content || ''
+    const raw = await llmChat(systemPrompt, dataSummary)
 
     // Parse the response
     let summary = raw

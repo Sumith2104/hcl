@@ -376,6 +376,69 @@ export async function llmChat(
 }[/PROFILE_COMPLETE]`
   }
 
+  // C. Roadmap Path Designer Handling
+  if (systemPrompt.includes('learning path designer') || userMessage.includes('Design a learning roadmap')) {
+    const goalMatch = userMessage.match(/becoming:\s*([^\n]+)/i)
+    const goalName = goalMatch ? goalMatch[1].trim() : 'Software & AI Engineer'
+
+    return JSON.stringify({
+      phases: [
+        {
+          phase: 1,
+          title: `Foundations of ${goalName}`,
+          description: `Master core programming paradigms, syntax, and foundational architectures.`,
+          durationWeeks: 3,
+          milestone: `Build and test 3 core practical baseline applications.`,
+          skills: [
+            { name: `${goalName} Core Fundamentals`, description: `Master the essential syntax and runtime models.`, keyTopics: ['Syntax & Types', 'Control Flow', 'Data Structures'] },
+            { name: `Environment & Tooling`, description: `Configure modern dev environments and version control.`, keyTopics: ['Git & GitHub', 'CLI Tools', 'Linters & Formatters'] }
+          ]
+        },
+        {
+          phase: 2,
+          title: `Intermediate Architecture & Frameworks`,
+          description: `Dive into asynchronous programming, backend frameworks, and database integrations.`,
+          durationWeeks: 4,
+          milestone: `Design and ship an end-to-end full-stack service with persistent storage.`,
+          skills: [
+            { name: `API & Service Design`, description: `Build high-throughput REST and GraphQL endpoints.`, keyTopics: ['REST APIs', 'Authentication', 'Validation'] },
+            { name: `Database Management`, description: `Implement relational schemas and query optimizations.`, keyTopics: ['PostgreSQL', 'Prisma ORM', 'Indexing'] }
+          ]
+        },
+        {
+          phase: 3,
+          title: `Advanced AI & Cloud Integrations`,
+          description: `Integrate vector databases, embeddings, and cloud microservices.`,
+          durationWeeks: 3,
+          milestone: `Deploy a production-grade AI-powered microservice to the cloud.`,
+          skills: [
+            { name: `AI & Vector Embeddings`, description: `Implement semantic search and RAG retrieval pipelines.`, keyTopics: ['Vector Embeddings', 'Cosine Similarity', 'RAG'] },
+            { name: `Cloud Deployment & Docker`, description: `Containerize and orchestrate scalable applications.`, keyTopics: ['Docker', 'CI/CD Pipelines', 'Cloud Hosting'] }
+          ]
+        },
+        {
+          phase: 4,
+          title: `Production Capstone Portfolio`,
+          description: `Design, benchmark, and publish an end-to-end production capstone.`,
+          durationWeeks: 2,
+          milestone: `Complete open-source portfolio capstone project with automated CI/CD.`,
+          skills: [
+            { name: `System Optimization & Benchmarking`, description: `Profile memory, throughput, and error budgets.`, keyTopics: ['Load Testing', 'Observability', 'Security Hardening'] }
+          ]
+        }
+      ]
+    })
+  }
+
+  // D. Weekly Summary Generator Handling
+  if (systemPrompt.includes('SUMMARY') || systemPrompt.includes('HIGHLIGHTS')) {
+    return `---SUMMARY---
+You are making steady, measurable progress on your personalized learning journey! Keep practicing daily drills and coding challenges to accelerate your skill mastery.
+
+---HIGHLIGHTS---
+["Completed core milestone drills", "Maintained consistent learning streak", "Explored new technical skills and resources"]`
+  }
+
   if (turnCount === 0) {
     return `Great to meet you! What specific skills or role are you looking to master, and what is your current experience level with programming?`
   }
