@@ -232,13 +232,19 @@ export function recommendResources(
 
 // ==================== LLM INTEGRATION (MULTI-PROVIDER DISPATCHER) ====================
 
-import ZAI from 'z-ai-web-dev-sdk'
-
-let zaiInstance: Awaited<ReturnType<typeof ZAI.create>> | null = null
+let zaiInstance: any = null
 
 async function getZAI() {
   if (!zaiInstance) {
-    zaiInstance = await ZAI.create()
+    try {
+      const { default: ZAI } = await import('z-ai-web-dev-sdk')
+      const createPromise = ZAI.create()
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('ZAI timeout')), 1500))
+      zaiInstance = await Promise.race([createPromise, timeoutPromise])
+    } catch {
+      zaiInstance = null
+      throw new Error('ZAI not available')
+    }
   }
   return zaiInstance
 }
@@ -267,6 +273,7 @@ export async function llmChat(
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents,
@@ -301,6 +308,7 @@ export async function llmChat(
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${activeKey}`
         },
+        signal: AbortSignal.timeout(3500),
         body: JSON.stringify({
           model: groqKey ? 'llama-3.3-70b-versatile' : 'gpt-4o-mini',
           messages,
@@ -1392,16 +1400,52 @@ Create 6-8 phases with specific skills and keyTopics. No resources needed. Retur
 
 function detectDomain(goal: string): string {
   const g = goal.toLowerCase()
-  if (/machine.?learn|ml.?engineer|ai.?engineer|deep.?learn|llm|large.?language.?model/i.test(g)) return 'ml'
-  if (/data.?scientist|data.?science|data.?analyst|data.?engineer/i.test(g)) return 'data-science'
-  if (/front.?end|react|angular|vue|web.?develop|full.?stack/i.test(g)) return 'web-dev'
-  if (/back.?end|api.?develop|node.?js|django|flask|express/i.test(g)) return 'web-dev'
+  
+  // 1. Forward Deployed & Solutions Engineering
+  if (/forward.?deploy|fde|solution.?architect|solution.?engineer|integration.?engineer|customer.?engineer|palantir/i.test(g)) return 'fde'
+  
+  // 2. Generative AI & RAG Engineering
+  if (/rag|generative.?ai|llm|retrieval.?augmented|langchain|llamaindex|vector.?database|agentic/i.test(g)) return 'genai-rag'
+
+  // 3. Machine Learning & Data Science
+  if (/machine.?learn|ml.?engineer|ai.?engineer|deep.?learn|pytorch|tensorflow|computer.?vision|nlp/i.test(g)) return 'ml'
+  if (/data.?scientist|data.?science|data.?analyst|data.?engineer|analytics|pandas|sql/i.test(g)) return 'data-science'
+
+  // 4. Systems & Backend
+  if (/systems.?engineer|rust|golang|c\+\+|embedded|distributed.?system|high.?throughput/i.test(g)) return 'systems'
+  if (/back.?end|api.?develop|microservice|database.?engineer|grpc/i.test(g)) return 'backend'
+
+  // 5. DevOps & Cloud
+  if (/devops|sre|site.?reliability|cloud.?engineer|platform.?engineer|kubernetes|docker|terraform|aws/i.test(g)) return 'devops'
+
+  // 6. Frontend, Mobile & Others
+  if (/front.?end|react|angular|vue|web.?develop|full.?stack|next.?js/i.test(g)) return 'web-dev'
   if (/mobile.?develop|ios.?develop|android.?develop|flutter|react.?native|swift|kotlin/i.test(g)) return 'mobile'
-  if (/devops|sre|site.?reliability|cloud.?engineer|platform.?engineer/i.test(g)) return 'devops'
   if (/cyber.?security|security.?engineer|info.?sec|penetrat/i.test(g)) return 'cybersecurity'
   if (/game.?develop|game.?design|unity|unreal|godot/i.test(g)) return 'game-dev'
   if (/ui.?ux|ux.?design|product.?design|interaction.?design/i.test(g)) return 'ui-ux'
-  return 'web-dev' // default
+
+  // Neural embedding similarity fallback
+  const domainVectors: Record<string, number[]> = {
+    'fde': getEmbedding('Forward Deployed Engineer enterprise data integration LLM client deployments APIs'),
+    'genai-rag': getEmbedding('Generative AI RAG LangChain Vector Search embeddings LLMs'),
+    'systems': getEmbedding('Systems Engineer Rust Go Concurrency Memory Low Latency'),
+    'devops': getEmbedding('DevOps Kubernetes Docker Cloud AWS CI/CD Terraform Infrastructure'),
+    'web-dev': getEmbedding('Full Stack Web Developer React Next.js TypeScript Node.js')
+  }
+  const queryVec = getEmbedding(goal)
+  let bestDomain = 'fde'
+  let bestSim = 0
+
+  for (const [dom, vec] of Object.entries(domainVectors)) {
+    const sim = cosineSimilarity(queryVec, vec)
+    if (sim > bestSim) {
+      bestSim = sim
+      bestDomain = dom
+    }
+  }
+
+  return bestSim >= 0.65 ? bestDomain : 'fde'
 }
 
 function generateFallbackRoadmap(
@@ -1410,6 +1454,9 @@ function generateFallbackRoadmap(
 ): AIRoadmapResult {
   const domain = detectDomain(targetGoal)
   const domainTemplates: Record<string, AIRoadmapPhase[]> = {
+    'fde': fdeTemplate(targetGoal),
+    'genai-rag': genAiRagTemplate(targetGoal),
+    'systems': systemsTemplate(targetGoal),
     'web-dev': webDevTemplate(targetGoal),
     'data-science': dataScienceTemplate(targetGoal),
     'ml': mlTemplate(targetGoal),
@@ -1420,7 +1467,7 @@ function generateFallbackRoadmap(
     'ui-ux': uiUxTemplate(targetGoal),
   }
 
-  const phases = domainTemplates[domain] || webDevTemplate(targetGoal)
+  const phases = domainTemplates[domain] || fdeTemplate(targetGoal)
 
   // Scale durations based on available hours/week
   const speedFactor = profile.availableHoursPerWeek >= 20 ? 0.7 : profile.availableHoursPerWeek <= 5 ? 1.5 : 1.0
@@ -1433,6 +1480,113 @@ function generateFallbackRoadmap(
 
 function buildSkill(name: string, description: string, keyTopics: string[]): AIRoadmapSkill {
   return { name, description, keyTopics, resources: matchResources(name, keyTopics, 3) }
+}
+
+function fdeTemplate(goal: string): AIRoadmapPhase[] {
+  return [
+    {
+      phase: 1, title: 'Enterprise Data Ingestion & Streaming Architecture',
+      description: 'Master enterprise-scale data pipelines, ETL/ELT transformations, and real-time event streaming designed for forward-deployed integration.',
+      durationWeeks: 4, milestone: 'Build an enterprise streaming pipeline ingesting 10k events/sec with schema validation and dead-letter queues',
+      skills: [
+        buildSkill('Enterprise Python & Data Pipelines', 'Build high-performance data processing workflows with Python, Pandas, and Polars.', ['Distributed data processing', 'ETL/ELT pipelines', 'Schema evolution & validation', 'Parquet & Arrow columnar storage']),
+        buildSkill('High-Performance SQL & Data Warehousing', 'Master analytical SQL, window functions, and enterprise data warehouses (PostgreSQL / Snowflake).', ['Complex analytical SQL', 'Query optimization & indexing', 'Data modeling (Star/Snowflake)', 'Partitioning & clustering']),
+        buildSkill('Apache Kafka & Event Streaming', 'Design scalable event-driven architectures with Kafka brokers, consumer groups, and stream processing.', ['Kafka producers & consumers', 'Consumer group rebalancing', 'Schema Registry & Avro', 'Idempotent processing']),
+      ],
+    },
+    {
+      phase: 2, title: 'Applied AI, Vector Search & Enterprise RAG Systems',
+      description: 'Implement production-grade Retrieval-Augmented Generation (RAG), vector databases, and multi-agent LLM systems for enterprise client workflows.',
+      durationWeeks: 4, milestone: 'Deploy a multi-tenant enterprise RAG system with hybrid semantic search, re-ranking, and source attribution',
+      skills: [
+        buildSkill('Vector Databases & Semantic Embeddings', 'Index and search high-dimensional embeddings using Pinecone, Milvus, and Qdrant.', ['Dense vector embeddings', 'HNSW & IVF indexing', 'Hybrid keyword + vector search', 'Chunking strategies']),
+        buildSkill('Enterprise RAG & Orchestration (LangChain / LlamaIndex)', 'Build robust document ingestion, context retrieval, and structured evaluation pipelines.', ['Advanced retrieval (HyDE, Parent-Child)', 'Cross-encoder re-ranking', 'Context window optimization', 'RAG evaluation (RAGAS)']),
+        buildSkill('LLM Agent Workflows & Tool Calling', 'Design agentic workflows that orchestrate database queries, external APIs, and deterministic reasoning.', ['ReAct agent architecture', 'Function calling & tool use', 'Stateful agent workflows (LangGraph)', 'Guardrails & output validation']),
+      ],
+    },
+    {
+      phase: 3, title: 'Production Microservices & Secure API Architecture',
+      description: 'Engineer high-throughput, low-latency microservices with enterprise authentication, mTLS, and resiliency patterns.',
+      durationWeeks: 3, milestone: 'Ship an enterprise API gateway supporting OAuth2/SAML, rate limiting, and gRPC microservice communication',
+      skills: [
+        buildSkill('High-Throughput gRPC & REST Microservices', 'Develop robust services with gRPC protocol buffers and REST APIs in Python/Go.', ['gRPC & Protobuf definition', 'Concurrent request handling', 'Idempotency keys & retries', 'Connection pooling']),
+        buildSkill('Enterprise Authentication & Security', 'Implement enterprise identity management, Single Sign-On (SSO), and role-based access control.', ['OAuth 2.0 & OIDC flows', 'SAML 2.0 enterprise SSO', 'mTLS service-to-service auth', 'RBAC & ABAC policy enforcement']),
+      ],
+    },
+    {
+      phase: 4, title: 'Cloud Infrastructure, Kubernetes & Air-Gapped Deployments',
+      description: 'Deploy and automate enterprise applications across cloud VPCs (AWS/Azure) and on-premise air-gapped environments.',
+      durationWeeks: 4, milestone: 'Automate multi-environment Kubernetes cluster deployment with Helm, Terraform, and automated security scans',
+      skills: [
+        buildSkill('Docker & Container Hardening', 'Build optimized, non-root multi-stage container images with vulnerability scanning.', ['Multi-stage Docker builds', 'Container security hardening', 'Distroless & minimal bases', 'Vulnerability scanning (Trivy)']),
+        buildSkill('Kubernetes & Helm Enterprise Deployments', 'Orchestrate microservices with Kubernetes manifests, Helm charts, and custom resource definitions.', ['Deployments, StatefulSets & Services', 'Ingress controllers & TLS', 'Helm templating & packaging', 'Resource limits & HPA autoscaling']),
+        buildSkill('Terraform Infrastructure-as-Code', 'Provision reproducible cloud infrastructure on AWS/GCP/Azure with automated CI/CD pipelines.', ['Terraform modules & state management', 'VPC & network security groups', 'IAM least-privilege policies', 'Automated CI/CD provisioning']),
+      ],
+    },
+    {
+      phase: 5, title: 'Observability, Distributed Tracing & Site Reliability',
+      description: 'Instrument full-stack telemetry, distributed tracing, and automated alert runbooks for enterprise client production environments.',
+      durationWeeks: 3, milestone: 'Configure end-to-end OpenTelemetry distributed tracing, Prometheus alerts, and Grafana client SLA dashboards',
+      skills: [
+        buildSkill('OpenTelemetry & Distributed Tracing', 'Instrument services to trace requests across asynchronous microservice boundaries.', ['Distributed trace propagation', 'Span context & baggage', 'OpenTelemetry collector setup', 'APM latency bottleneck analysis']),
+        buildSkill('Prometheus Metrics & SLA Monitoring', 'Define service level indicators (SLIs), objectives (SLOs), and automated alerting rules.', ['PromQL query language', 'Golden signals (Latency, Traffic, Errors, Saturation)', 'Grafana dashboard design', 'Alertmanager routing & paging']),
+      ],
+    },
+    {
+      phase: 6, title: 'Capstone: Forward Deployed Enterprise AI Platform',
+      description: 'Design, deliver, and document an end-to-end mission-critical enterprise AI deployment for a simulated client.',
+      durationWeeks: 4, milestone: 'Deliver a production-ready enterprise AI platform deployed on Kubernetes with live data streaming, RAG agents, and telemetry',
+      skills: [
+        buildSkill('Forward Deployed Solution Architecture', 'Synthesize client business constraints, technical trade-offs, and operational runbooks.', ['Enterprise technical scoping', 'Proof-of-Concept to Production migration', 'Architecture Decision Records (ADRs)', 'Customer handover & runbooks']),
+      ],
+    },
+  ]
+}
+
+function genAiRagTemplate(goal: string): AIRoadmapPhase[] {
+  return [
+    {
+      phase: 1, title: 'LLM Fundamentals & Vector Search Architecture',
+      description: 'Master embeddings, vector databases, and core language model mechanics.',
+      durationWeeks: 3, milestone: 'Build a vector retrieval engine using HNSW indexing and semantic cosine similarity',
+      skills: [
+        buildSkill('Vector Embeddings & Cosine Search', 'Generate dense embeddings and query vector indexes.', ['Embedding models', 'HNSW indexing', 'Cosine & Dot product similarity']),
+        buildSkill('Vector Databases (Pinecone / Qdrant)', 'Deploy and query production vector databases.', ['Vector collections', 'Metadata filtering', 'Hybrid sparse-dense search']),
+      ],
+    },
+    {
+      phase: 2, title: 'Advanced RAG & Document Ingestion Pipelines',
+      description: 'Build enterprise document processing, chunking strategies, and re-ranking pipelines.',
+      durationWeeks: 4, milestone: 'Deploy an advanced RAG pipeline with parent-document retrieval and cross-encoder re-ranking',
+      skills: [
+        buildSkill('Document Parsing & Chunking Strategies', 'Process PDFs, Markdown, and tabular data with semantic boundary chunking.', ['Recursive character chunking', 'Semantic chunking', 'Table and image extraction']),
+        buildSkill('Re-Ranking & Context Optimization', 'Improve precision with cross-encoders and context compression.', ['FlashRank & Cohere re-rankers', 'Lost-in-the-middle mitigation', 'Contextual compression']),
+      ],
+    },
+    {
+      phase: 3, title: 'Agentic Workflows & Multi-Agent Collaboration',
+      description: 'Design autonomous AI agents with tools, memory, and multi-step planning.',
+      durationWeeks: 4, milestone: 'Build a multi-agent research assistant using LangGraph with state persistence and human-in-the-loop validation',
+      skills: [
+        buildSkill('LangGraph & State Machines', 'Build cyclic agent workflows with branching and state validation.', ['State graphs', 'Conditional edges', 'Human-in-the-loop checkpoints']),
+        buildSkill('Tool Calling & Deterministic Validation', 'Equip agents with verified tools, SQL queries, and code interpreters.', ['Pydantic function schemas', 'SQL agent sandboxing', 'Self-correction loops']),
+      ],
+    },
+  ]
+}
+
+function systemsTemplate(goal: string): AIRoadmapPhase[] {
+  return [
+    {
+      phase: 1, title: 'Rust Core & Systems Programming',
+      description: 'Master ownership, borrowing, lifetimes, and low-level memory control.',
+      durationWeeks: 4, milestone: 'Build a custom memory-safe ring buffer and concurrent thread pool in Rust',
+      skills: [
+        buildSkill('Rust Ownership & Memory Safety', 'Master ownership, borrowing, and zero-cost abstractions.', ['Ownership & Borrowing', 'Lifetimes & Generics', 'Smart pointers (Box, Rc, Arc)']),
+        buildSkill('Concurrency & Synchronization', 'Implement thread-safe shared state with atomics, mutexes, and channels.', ['Atomics & Memory ordering', 'Mutex & RwLock', 'MPSC Channels']),
+      ],
+    },
+  ]
 }
 
 function webDevTemplate(goal: string): AIRoadmapPhase[] {
