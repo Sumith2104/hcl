@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFluxbase, dbError } from '@/lib/fluxbase-safe'
-import { evaluateAdaptation, generateAdaptationExplanation } from '@/lib/ai-engine'
+import { evaluateAdaptation, generateAdaptationExplanation, updateKnowledgeState, getMasteryClassification } from '@/lib/ai-engine'
 
 interface ProgressBody {
   userId: string
@@ -53,6 +53,42 @@ export async function POST(req: NextRequest) {
       RETURNING *
     `)
     const progress = progressRows[0]
+
+    // Bayesian Knowledge Tracing (BKT) ML Update
+    let bktResult = null
+    if (assessmentScore !== null && assessmentScore !== undefined && roadmapItem.skillId) {
+      const isCorrect = Number(assessmentScore) >= 70
+      
+      // Fetch prior user skill mastery confidence
+      const userSkillRows = await fb.fluxbase.query(`
+        SELECT * FROM UserSkill 
+        WHERE user_id = '${fb.escapeSql(userId)}' AND skill_id = '${fb.escapeSql(roadmapItem.skillId)}'
+        LIMIT 1
+      `)
+      
+      const priorConfidence = Number(userSkillRows[0]?.confidenceScore || 0.20)
+      const bkt = updateKnowledgeState(priorConfidence, isCorrect)
+      const mastery = getMasteryClassification(bkt.nextPLt)
+
+      // Upsert UserSkill with new BKT confidence score
+      await fb.fluxbase.run(`
+        INSERT INTO UserSkill (id, user_id, skill_id, proficiency_level, confidence_score, verified, created_at, updated_at)
+        VALUES (${fb.qid()}, '${fb.escapeSql(userId)}', '${fb.escapeSql(roadmapItem.skillId)}', '${mastery.level}', ${bkt.nextPLt.toFixed(4)}, ${mastery.isMastered ? 1 : 0}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, skill_id) DO UPDATE SET 
+          proficiency_level = '${mastery.level}',
+          confidence_score = ${bkt.nextPLt.toFixed(4)},
+          verified = ${mastery.isMastered ? 1 : 0},
+          updated_at = CURRENT_TIMESTAMP
+      `)
+
+      bktResult = {
+        priorScore: priorConfidence,
+        posteriorScore: bkt.posteriorPLt,
+        newMasteryScore: bkt.nextPLt,
+        masteryLevel: mastery.level,
+        isMastered: mastery.isMastered
+      }
+    }
 
     // Update roadmap item status based on completion
     if (completionPercentage !== undefined) {
@@ -134,7 +170,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ progress, adaptation: adaptationResult })
+    return NextResponse.json({ progress, adaptation: adaptationResult, bkt: bktResult })
   } catch (error) {
     const err = dbError(error, 'UpdateProgress')
     return NextResponse.json({ error: err.error }, { status: err.status })

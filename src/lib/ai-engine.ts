@@ -14,31 +14,71 @@ const IMPORTANCE_ORDER: Record<string, number> = {
   low: 1,
 }
 
-// ==================== SKILL GAP ANALYSIS (DETERMINISTIC) ====================
+import { getEmbedding, cosineSimilarity, findTopKMatches } from './ml/embeddings'
+import { updateKnowledgeState, getMasteryClassification, DEFAULT_BKT_PARAMS, type BKTParameters } from './ml/knowledge-tracing'
+import { scheduleNextReview, calculateRetrievability, type FSRSCardState, type ReviewGrade } from './ml/spaced-repetition'
+import { rankResourcesContextualBandit, type LearnerContext } from './ml/bandit-recommender'
+
+export {
+  getEmbedding,
+  cosineSimilarity,
+  findTopKMatches,
+  updateKnowledgeState,
+  getMasteryClassification,
+  DEFAULT_BKT_PARAMS,
+  scheduleNextReview,
+  calculateRetrievability,
+  rankResourcesContextualBandit
+}
+
+// ==================== SKILL GAP ANALYSIS (NEURAL SEMANTIC MATCHING) ====================
 
 interface SkillGapResult {
-  known: { skill: string; level: string; requiredLevel: string }[]
-  gaps: { skill: string; requiredLevel: string; importance: string; category: string }[]
+  known: { skill: string; level: string; requiredLevel: string; similarity?: number }[]
+  gaps: { skill: string; requiredLevel: string; importance: string; category: string; similarity?: number }[]
 }
 
 export function findSkillGaps(
   userSkills: { name: string; level: string }[],
   roleRequirements: { skillName: string; requiredLevel: string; importance: string }[]
 ): SkillGapResult {
-  const userSkillMap = new Map(userSkills.map(s => [s.name.toLowerCase(), s.level]))
   const known: SkillGapResult['known'] = []
   const gaps: SkillGapResult['gaps'] = []
 
+  // Compute dense embeddings for user skills
+  const userSkillVectors = userSkills.map(us => ({
+    name: us.name,
+    level: us.level,
+    levelNum: LEVEL_ORDER[us.level] || 0,
+    vector: getEmbedding(us.name)
+  }))
+
   for (const req of roleRequirements) {
-    const userLevel = userSkillMap.get(req.skillName.toLowerCase())
-    const userLevelNum = LEVEL_ORDER[userLevel || 'none'] || 0
+    const reqVec = getEmbedding(req.skillName)
     const requiredLevelNum = LEVEL_ORDER[req.requiredLevel] || 0
 
-    if (userLevelNum >= requiredLevelNum) {
+    // Find best semantic match among user skills using Cosine Similarity
+    let bestMatch: (typeof userSkillVectors)[0] | null = null
+    let maxSim = 0
+
+    for (const us of userSkillVectors) {
+      const sim = cosineSimilarity(reqVec, us.vector)
+      if (sim > maxSim) {
+        maxSim = sim
+        bestMatch = us
+      }
+    }
+
+    const isSemanticMatch = maxSim >= 0.70 && bestMatch !== null
+    const userLevelNum = isSemanticMatch ? bestMatch.levelNum : 0
+    const matchedLevel = isSemanticMatch ? bestMatch.level : 'none'
+
+    if (isSemanticMatch && userLevelNum >= requiredLevelNum) {
       known.push({
         skill: req.skillName,
-        level: userLevel || 'none',
+        level: matchedLevel,
         requiredLevel: req.requiredLevel,
+        similarity: Number(maxSim.toFixed(3))
       })
     } else {
       gaps.push({
@@ -46,6 +86,7 @@ export function findSkillGaps(
         requiredLevel: req.requiredLevel,
         importance: req.importance,
         category: '',
+        similarity: Number(maxSim.toFixed(3))
       })
     }
   }
@@ -150,7 +191,7 @@ export async function orderSkillsByPrerequisites(
   return { ordered, unresolvable }
 }
 
-// ==================== RESOURCE RECOMMENDATION ENGINE ====================
+// ==================== RESOURCE RECOMMENDATION (CONTEXTUAL BANDIT ML) ====================
 
 interface ResourceRec {
   resource: { id: string; title: string; description: string; url: string; type: string; difficulty: string; estimatedHours: number }
@@ -162,47 +203,31 @@ export function recommendResources(
   skillName: string,
   userLevel: string,
   preferredStyle: string,
-  allResources: any[]
+  allResources: any[],
+  targetGoal: string = ''
 ): ResourceRec[] {
-  const recommendations: ResourceRec[] = []
-  const userLevelNum = LEVEL_ORDER[userLevel] || 0
-
-  for (const resource of allResources) {
-    const resourceSkills: any[] = resource.skills || []
-    const isRelevant = resourceSkills.some((rs: any) => {
-      const rsName = rs?.skill?.name || rs?.name
-      if (!rsName) return false
-      const rsLower = rsName.toLowerCase()
-      const targetLower = skillName.toLowerCase()
-      return rsLower === targetLower || rsLower.includes(targetLower) || targetLower.includes(rsLower)
-    })
-    if (!isRelevant) continue
-
-    const resourceLevelNum = LEVEL_ORDER[resource.difficulty] || 0
-    const levelDiff = Math.abs(resourceLevelNum - userLevelNum)
-    const difficultyMatch = levelDiff <= 1 ? 1.0 : levelDiff <= 2 ? 0.5 : 0.1
-
-    let preferenceMatch = 0.5
-    if (preferredStyle === 'video' && resource.type === 'video') preferenceMatch = 1.0
-    else if (preferredStyle === 'reading' && (resource.type === 'article' || resource.type === 'book')) preferenceMatch = 1.0
-    else if (preferredStyle === 'hands-on' && (resource.type === 'tutorial' || resource.type === 'project')) preferenceMatch = 1.0
-    else if (preferredStyle === 'mixed') preferenceMatch = 0.8
-
-    const qualityMatch = resource.qualityScore
-    const totalScore = 1.0 * 0.40 + difficultyMatch * 0.25 + preferenceMatch * 0.15 + qualityMatch * 0.20
-
-    let reason = 'Matches ' + skillName
-    if (preferenceMatch > 0.8) reason += ' and your ' + preferredStyle + ' learning preference'
-    if (difficultyMatch > 0.8) reason += ' at the right difficulty level'
-
-    recommendations.push({
-      resource: { id: resource.id, title: resource.title, description: resource.description, url: resource.url, type: resource.type, difficulty: resource.difficulty, estimatedHours: resource.estimatedHours },
-      score: totalScore,
-      reason,
-    })
+  const context: LearnerContext = {
+    targetGoal: targetGoal || skillName,
+    experienceLevel: (userLevel as any) || 'beginner',
+    preferredStyle: (preferredStyle as any) || 'mixed',
+    hoursPerWeek: 10
   }
 
-  return recommendations.sort((a, b) => b.score - a.score).slice(0, 5)
+  const ranked = rankResourcesContextualBandit(skillName, context, allResources, 5)
+
+  return ranked.map(r => ({
+    resource: {
+      id: r.resource.id,
+      title: r.resource.title,
+      description: r.resource.description,
+      url: r.resource.url,
+      type: r.resource.type,
+      difficulty: r.resource.difficulty,
+      estimatedHours: r.resource.estimatedHours
+    },
+    score: r.score,
+    reason: r.reason
+  }))
 }
 
 // ==================== LLM INTEGRATION ====================
