@@ -32,6 +32,7 @@ import { FlashcardStudyTool } from './FlashcardStudyTool'
 import { QuizChallengePanel } from './QuizChallengePanel'
 import { CommunityFeedPanel } from './CommunityFeedPanel'
 import { StreakCalendarPanel } from './StreakCalendarPanel'
+import { MLInsightsPanel } from './MLInsightsPanel'
 import {
  RadarChart,
  PolarGrid,
@@ -316,6 +317,10 @@ export function DashboardView() {
  <GitBranch className="h-4 w-4" />
  <span className="hidden sm:inline">Skill Tree</span>
  </TabsTrigger>
+ <TabsTrigger value="ml" className="gap-2 rounded-none px-4 py-2.5 text-sm text-indigo-500 font-semibold data-[state=active]:text-indigo-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none border-b-2 border-b-transparent data-[state=active]:border-b-indigo-600 data-[state=active]:-mb-px">
+ <Brain className="h-4 w-4 text-indigo-500" />
+ <span className="hidden sm:inline">ML Intelligence</span>
+ </TabsTrigger>
  <TabsTrigger value="community" className="gap-2 rounded-none px-4 py-2.5 text-sm text-gray-400 data-[state=active]:text-gray-900 data-[state=active]:bg-transparent data-[state=active]:shadow-none border-b-2 border-b-transparent data-[state=active]:border-b-gray-900 data-[state=active]:-mb-px">
  <Users className="h-4 w-4" />
  <span className="hidden sm:inline">Community</span>
@@ -326,8 +331,17 @@ export function DashboardView() {
  </TabsTrigger>
  </TabsList>
 
+ {/* ML Intelligence Tab */}
+ <TabsContent value="ml" className="mt-0 space-y-6">
+ <MLInsightsPanel />
+ </TabsContent>
+
  {/* Overview Tab */}
  <TabsContent value="overview" className="mt-0 space-y-6">
+ {/* ML Intelligence Banner */}
+ <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
+ <MLInsightsPanel />
+ </motion.div>
  {/* Two-column layout: Tips + Notes | Progress Chart */}
  <div className="grid gap-6 lg:grid-cols-5 mb-6">
  {/* Left: Daily Tips */}
