@@ -1,0 +1,19 @@
+import { NextRequest, NextResponse } from 'next/server'
+
+export function proxy(request: NextRequest) {
+  const response = NextResponse.next()
+
+  // Prevent proxy caching for all API routes
+  if (request.nextUrl.pathname.startsWith('/api/')) {
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+    response.headers.set('Pragma', 'no-cache')
+    response.headers.set('Expires', '0')
+    response.headers.set('Surrogate-Control', 'no-store')
+  }
+
+  return response
+}
+
+export const config = {
+  matcher: '/api/:path*',
+}

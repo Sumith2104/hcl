@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== USER & AUTH ====================
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String?
+  role      String   @default("learner") // learner, admin
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  profile       LearnerProfile?
+  userSkills    UserSkill[]
+  roadmaps      Roadmap[]
+  progress      Progress[]
+  onboardingMessages OnboardingMessage[]
+  chatMessages  ChatMessage[]
+  notes         LearningNote[]
+  studySessions StudySession[]
+}
+
+// ==================== LEARNER PROFILE ====================
+
+model LearnerProfile {
+  id                      String   @id @default(cuid())
+  userId                  String   @unique
+  targetGoal              String
+  experienceLevel         String   @default("beginner") // beginner, intermediate, advanced
+  availableHoursPerWeek   Int      @default(10)
+  preferredLearningStyle  String   @default("mixed") // visual, reading, video, hands-on, mixed
+  interests               String   @default("[]") // JSON array
+  targetDurationWeeks     Int?
+  onboardingCompleted     Boolean  @default(false)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ==================== SKILL KNOWLEDGE BASE ====================
+
+model Skill {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  category    String   // Programming, Math, DevOps, AI/ML, etc.
+  description String   @default("")
+  createdAt   DateTime @default(now())
+
+  prerequisites    SkillPrerequisite[]    @relation("SkillPrereqs")
+  dependsOn        SkillPrerequisite[]    @relation("SkillDepends")
+  roleRequirements RoleSkillRequirement[]
+  userSkills       UserSkill[]
+  resourceSkills   ResourceSkill[]
+  roadmapItems     RoadmapItem[]
+}
+
+model SkillPrerequisite {
+  id                   String @id @default(cuid())
+  skillId              String
+  prerequisiteSkillId  String
+  importance           String @default("required") // required, recommended
+
+  skill       Skill @relation("SkillPrereqs", fields: [skillId], references: [id], onDelete: Cascade)
+  prerequisite Skill @relation("SkillDepends", fields: [prerequisiteSkillId], references: [id], onDelete: Cascade)
+
+  @@unique([skillId, prerequisiteSkillId])
+}
+
+model RoleSkillRequirement {
+  id            String @id @default(cuid())
+  targetRole    String
+  skillId       String
+  requiredLevel String @default("intermediate") // beginner, intermediate, advanced, expert
+  importance    String @default("high") // critical, high, medium, low
+
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([targetRole, skillId])
+}
+
+// ==================== USER SKILLS ====================
+
+model UserSkill {
+  id               String   @id @default(cuid())
+  userId           String
+  skillId          String
+  proficiencyLevel String   @default("beginner") // beginner, intermediate, advanced, expert
+  confidenceScore  Float    @default(0.5)
+  verified         Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skill Skill @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skillId])
+}
+
+// ==================== RESOURCES ====================
+
+model Resource {
+  id               String   @id @default(cuid())
+  title            String
+  description      String   @default("")
+  url              String   @default("")
+  type             String   @default("article") // article, video, course, book, tutorial, project
+  difficulty       String   @default("beginner") // beginner, intermediate, advanced
+  estimatedHours   Float    @default(2.0)
+  qualityScore     Float    @default(0.5)
+  createdAt        DateTime @default(now())
+
+  skills   ResourceSkill[]
+  roadmapResources RoadmapResource[]
+}
+
+model ResourceSkill {
+  id         String @id @default(cuid())
+  resourceId String
+  skillId    String
+
+  resource Resource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  skill    Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([resourceId, skillId])
+}
+
+// ==================== ROADMAPS ====================
+
+model Roadmap {
+  id                      String   @id @default(cuid())
+  userId                  String
+  targetGoal              String
+  estimatedDurationWeeks Int      @default(12)
+  status                  String   @default("active") // active, completed, archived
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  user  User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items RoadmapItem[]
+}
+
+model RoadmapItem {
+  id               String   @id @default(cuid())
+  roadmapId        String
+  skillId          String?
+  sequenceOrder    Int
+  phase            Int
+  title            String
+  description      String   @default("")
+  estimatedHours   Float    @default(5.0)
+  milestone        String   @default("")
+  status           String   @default("locked") // locked, available, in_progress, completed, skipped
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  roadmap    Roadmap          @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  skill      Skill?           @relation(fields: [skillId], references: [id])
+  progress    Progress[]
+  resources RoadmapResource[]
+}
+
+model RoadmapResource {
+  id              String @id @default(cuid())
+  roadmapItemId   String
+  resourceId      String
+  recommendationReason String @default("")
+
+  roadmapItem RoadmapItem @relation(fields: [roadmapItemId], references: [id], onDelete: Cascade)
+  resource    Resource     @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@unique([roadmapItemId, resourceId])
+}
+
+// ==================== PROGRESS ====================
+
+model Progress {
+  id                String   @id @default(cuid())
+  userId            String
+  roadmapItemId     String
+  completionPercentage Float   @default(0)
+  assessmentScore   Float?
+  feedback          String   @default("")
+  updatedAt         DateTime @updatedAt
+  createdAt         DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roadmapItem RoadmapItem @relation(fields: [roadmapItemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roadmapItemId])
+}
+
+// ==================== ONBOARDING ====================
+
+model OnboardingMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // user, assistant
+  content   String
+  step      Int      @default(0)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ==================== CHAT (AI ASSISTANT) ====================
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // user, assistant
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ==================== LEARNING NOTES ====================
+
+model LearningNote {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  content   String
+  category  String   @default("general") // general, insight, question, resource, breakthrough
+  tags      String   @default("") // comma-separated tags
+  isPinned  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ==================== STUDY SESSIONS ====================
+
+model StudySession {
+  id          String   @id @default(cuid())
+  userId      String
+  skillName   String   @default("")
+  duration    Int      @default(0) // in minutes
+  notes       String   @default("")
+  type        String   @default("focus") // focus, review, practice, quiz
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
