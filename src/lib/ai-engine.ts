@@ -472,6 +472,7 @@ Here is a breakdown of the key concepts and recommendations:
 
   // Default intelligent response
   return `I understand you're interested in ${userTrim}. Tell me more about your goals and current background so we can tailor your learning plan!`
+}
 
 // ==================== ONBOARDING AI ====================
 
