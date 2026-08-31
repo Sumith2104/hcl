@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardAction } from '@/componen
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Sparkles, Plus, BookOpen, TrendingUp, Compass } from 'lucide-react'
+import { Sparkles, Plus, BookOpen, TrendingUp, Compass, Zap, Target, Layers } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -13,27 +13,14 @@ import { useAppStore } from '@/store'
 
 // ==================== TYPES ====================
 
-interface UserSkill {
-  skill: {
-    id: string
-    name: string
-    category: string
-  }
-  proficiencyLevel: string
-}
-
-interface AllSkill {
-  id: string
-  name: string
+interface MLSkillRecommendation {
+  skillId: string
+  skillName: string
   category: string
-  description: string
   difficulty: string
-}
-
-interface Recommendation {
-  skill: AllSkill
   reason: string
-  reasonIcon: 'complement' | 'popular' | 'builds-on'
+  reasonIcon: 'complement' | 'trending' | 'career-boost' | 'builds-on' | 'foundation'
+  matchScore: number
 }
 
 interface SkillRecommendationsPanelProps {
@@ -62,14 +49,14 @@ const DIFFICULTY_COLORS: Record<string, string> = {
 
 // ==================== REASON ICON COMPONENT ====================
 
-function ReasonIcon({ type }: { type: 'complement' | 'popular' | 'builds-on' }) {
+function ReasonIcon({ type }: { type: string }) {
   switch (type) {
-    case 'complement':
-      return <TrendingUp className="h-3 w-3" />
-    case 'popular':
-      return <Compass className="h-3 w-3" />
-    case 'builds-on':
-      return <BookOpen className="h-3 w-3" />
+    case 'complement': return <TrendingUp className="h-3 w-3" />
+    case 'trending': return <Zap className="h-3 w-3" />
+    case 'career-boost': return <Target className="h-3 w-3" />
+    case 'builds-on': return <Layers className="h-3 w-3" />
+    case 'foundation': return <BookOpen className="h-3 w-3" />
+    default: return <Compass className="h-3 w-3" />
   }
 }
 
@@ -130,54 +117,25 @@ function EmptyState() {
     </div>
   )
 }
+// ==================== ML BADGE ====================
 
-// ==================== REASON GENERATION ====================
-
-function generateReason(
-  skill: AllSkill,
-  topCategories: string[],
-  userSkillsByCategory: Record<string, string[]>
-): { reason: string; reasonIcon: 'complement' | 'popular' | 'builds-on' } {
-  const category = skill.category
-  const isInTopCategory = topCategories.includes(category)
-
-  if (isInTopCategory) {
-    // Find a skill name from the user's skills in the same category to reference
-    const categorySkills = userSkillsByCategory[category] || []
-    if (categorySkills.length > 0) {
-      const refSkill = categorySkills[0]
-      return {
-        reason: `Complements your ${refSkill} skills`,
-        reasonIcon: 'complement',
-      }
-    }
-    return {
-      reason: `Popular in ${category}`,
-      reasonIcon: 'popular',
-    }
-  }
-
-  // Check if there's a related user skill in a nearby category
-  const allUserSkillNames = Object.values(userSkillsByCategory).flat()
-  if (allUserSkillNames.length > 0) {
-    const refSkill = allUserSkillNames[0]
-    return {
-      reason: `Builds on your ${refSkill} knowledge`,
-      reasonIcon: 'builds-on',
-    }
-  }
-
-  return {
-    reason: `Great next step for your learning journey`,
-    reasonIcon: 'popular',
-  }
+function MLBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 border-gray-300 bg-gray-50 text-gray-600"
+    >
+      <Zap className="h-3 w-3" />
+      AI-Powered
+    </Badge>
+  )
 }
 
 // ==================== MAIN COMPONENT ====================
 
 export function SkillRecommendationsPanel({ className }: SkillRecommendationsPanelProps) {
   const { user } = useAppStore()
-  const [recommendations, setRecommendations] = useState<Recommendation[]>([])
+  const [recommendations, setRecommendations] = useState<MLSkillRecommendation[]>([])
   const [loading, setLoading] = useState(true)
   const [addedSkills, setAddedSkills] = useState<Set<string>>(new Set())
 
@@ -186,66 +144,38 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
 
     let cancelled = false
 
-    const userId = user!.id
-    async function fetchRecommendations() {
+    async function fetchMLRecommendations() {
       setLoading(true)
       try {
-        const [profileRes, skillsRes] = await Promise.all([
-          fetch(`/api/profile?userId=${userId}`),
-          fetch('/api/skills'),
-        ])
-
+        // Fetch profile for ML context
+        const profileRes = await fetch(`/api/profile?userId=${user!.id}`)
         const profileData = await profileRes.json()
-        const skillsData = await skillsRes.json()
+        const profile = profileData.profile
 
         if (cancelled) return
 
-        const userSkills: UserSkill[] = profileData.userSkills || []
-        const allSkills: AllSkill[] = skillsData.skills || []
-
-        // Skills the user already has
-        const userSkillIds = new Set(userSkills.map((us) => us.skill.id))
-
-        // Skills the user doesn't have
-        const unownedSkills = allSkills.filter((s) => !userSkillIds.has(s.id))
-
-        // Compute top categories from user skills
-        const categoryCount: Record<string, number> = {}
-        userSkills.forEach((us) => {
-          const cat = us.skill.category
-          categoryCount[cat] = (categoryCount[cat] || 0) + 1
+        // Call ML recommendations API
+        const mlRes = await fetch('/api/ml/recommendations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: user!.id,
+            goal: profile?.targetGoal || 'Full Stack Developer',
+            experienceLevel: profile?.experienceLevel || 'beginner',
+            learningStyle: profile?.preferredLearningStyle || 'mixed',
+            maxRecommendations: 8,
+          }),
         })
-        const sortedCategories = Object.entries(categoryCount).sort((a, b) => b[1] - a[1])
-        const topCategories = sortedCategories.slice(0, 3).map(([cat]) => cat)
+        const mlData = await mlRes.json()
 
-        // Build user skills by category for reason generation
-        const userSkillsByCategory: Record<string, string[]> = {}
-        userSkills.forEach((us) => {
-          const cat = us.skill.category
-          if (!userSkillsByCategory[cat]) userSkillsByCategory[cat] = []
-          userSkillsByCategory[cat].push(us.skill.name)
-        })
+        if (cancelled) return
 
-        // Score and sort unowned skills
-        const scored = unownedSkills.map((skill) => {
-          let score = 0
-          // Prioritize skills in top categories
-          if (topCategories.includes(skill.category)) {
-            const catIndex = topCategories.indexOf(skill.category)
-            score += (3 - catIndex) * 10
-          }
-          // Slight preference for beginner difficulty if user is early
-          if (skill.difficulty === 'beginner') score += 2
-          if (skill.difficulty === 'intermediate') score += 1
-
-          const { reason, reasonIcon } = generateReason(skill, topCategories, userSkillsByCategory)
-          return { skill, reason, reasonIcon, score }
-        })
-
-        scored.sort((a, b) => b.score - a.score)
-        const top8 = scored.slice(0, 8).map(({ skill, reason, reasonIcon }) => ({ skill, reason, reasonIcon }))
-
-        setRecommendations(top8)
+        if (mlData.recommendations && mlData.recommendations.length > 0) {
+          setRecommendations(mlData.recommendations)
+        } else {
+          // Fallback to simple API-based recommendations
+          setRecommendations([])
+        }
       } catch {
         setRecommendations([])
       } finally {
@@ -253,33 +183,33 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
       }
     }
 
-    fetchRecommendations()
+    fetchMLRecommendations()
 
     return () => {
       cancelled = true
     }
   }, [user])
 
-  const handleAddToProfile = useCallback(async (skill: AllSkill) => {
-    setAddedSkills((prev) => new Set(prev).add(skill.id))
+  const handleAddToProfile = useCallback(async (skill: MLSkillRecommendation) => {
+    setAddedSkills((prev) => new Set(prev).add(skill.skillId))
     try {
       const res = await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user!.id,
-          targetGoal: 'Learn ' + skill.name,
-          currentSkills: [{ skill: skill.name, level: 'beginner' }],
+          targetGoal: 'Learn ' + skill.skillName,
+          currentSkills: [{ skill: skill.skillName, level: 'beginner' }],
         }),
       })
       if (res.ok) {
-        toast.success(`${skill.name} added to your profile!`)
+        toast.success(`${skill.skillName} added to your profile!`)
       } else {
-        setAddedSkills((prev) => { const n = new Set(prev); n.delete(skill.id); return n })
+        setAddedSkills((prev) => { const n = new Set(prev); n.delete(skill.skillId); return n })
         toast.error('Failed to add skill. Try again.')
       }
     } catch {
-      setAddedSkills((prev) => { const n = new Set(prev); n.delete(skill.id); return n })
+      setAddedSkills((prev) => { const n = new Set(prev); n.delete(skill.skillId); return n })
       toast.error('Failed to add skill. Try again.')
     }
   }, [user])
@@ -301,9 +231,12 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
           </div>
           <CardAction>
             {!loading && recommendations.length > 0 && (
-              <Badge className="bg-gray-100 text-gray-700 border-gray-300">
-                {recommendations.length} skills
-              </Badge>
+              <div className="flex items-center gap-2">
+                <MLBadge />
+                <Badge className="bg-gray-100 text-gray-700 border-gray-300">
+                  {recommendations.length} skills
+                </Badge>
+              </div>
             )}
           </CardAction>
         </CardHeader>
@@ -317,14 +250,14 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
             <div className="max-h-80 overflow-y-auto pr-1">
               <div className="flex flex-col gap-2.5">
                 {recommendations.map((rec, i) => {
-                  const isAdded = addedSkills.has(rec.skill.id)
-                  const categoryColor = CATEGORY_COLORS[rec.skill.category] || 'bg-gray-100 text-gray-600 border-gray-300'
-                  const difficultyKey = (rec.skill.difficulty || 'beginner').toLowerCase()
+                  const isAdded = addedSkills.has(rec.skillId)
+                  const categoryColor = CATEGORY_COLORS[rec.category] || 'bg-gray-100 text-gray-600 border-gray-300'
+                  const difficultyKey = (rec.difficulty || 'beginner').toLowerCase()
                   const difficultyColor = DIFFICULTY_COLORS[difficultyKey] || DIFFICULTY_COLORS.beginner
 
                   return (
                     <motion.div
-                      key={rec.skill.id}
+                      key={rec.skillId}
                       custom={i}
                       variants={itemVariants}
                       initial="hidden"
@@ -338,24 +271,30 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="text-sm font-semibold text-foreground">
-                            {rec.skill.name}
+                            {rec.skillName}
                           </span>
                           <Badge
                             variant="outline"
                             className={cn('text-[10px] px-1.5 py-0 leading-4', categoryColor)}
                           >
-                            {rec.skill.category}
+                            {rec.category}
                           </Badge>
                           <Badge
                             variant="outline"
                             className={cn('text-[10px] px-1.5 py-0 leading-4', difficultyColor)}
                           >
-                            {rec.skill.difficulty}
+                            {rec.difficulty}
                           </Badge>
+                          {/* ML match score indicator */}
+                          {rec.matchScore > 0 && (
+                            <span className="text-[10px] text-gray-400">
+                              {Math.round(rec.matchScore * 100)}% match
+                            </span>
+                          )}
                         </div>
                       </div>
 
-                      {/* Reason text */}
+                      {/* ML-generated reason text */}
                       <div className="mt-1.5 flex items-center gap-1.5 text-gray-600">
                         <ReasonIcon type={rec.reasonIcon} />
                         <span className="text-xs">{rec.reason}</span>
@@ -368,7 +307,7 @@ export function SkillRecommendationsPanel({ className }: SkillRecommendationsPan
                           size="sm"
                           className="h-7 gap-1.5 text-xs"
                           disabled={isAdded}
-                          onClick={() => handleAddToProfile(rec.skill)}
+                          onClick={() => handleAddToProfile(rec)}
                         >
                           {isAdded ? (
                             <>

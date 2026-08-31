@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
+import { mlEstimateCourseMeta } from '@/lib/ml-engine'
 
 // In-memory cache for course search results
 const courseCache = new Map<string, { data: CourseResult[]; timestamp: number }>()
@@ -62,7 +63,7 @@ function identifyPlatform(url: string, snippet: string): { name: string; domain:
   return { name: 'Web Resource', domain: '', type: 'article' }
 }
 
-function estimateDifficulty(query: string, snippet: string): CourseResult['difficulty'] {
+function estimateDifficultyFallback(query: string, snippet: string): CourseResult['difficulty'] {
   const text = (query + ' ' + snippet).toLowerCase()
   if (text.includes('beginner') || text.includes('intro') || text.includes('fundamental') || text.includes('basics') || text.includes('101') || text.includes('getting started')) {
     return 'beginner'
@@ -73,6 +74,21 @@ function estimateDifficulty(query: string, snippet: string): CourseResult['diffi
   return 'intermediate'
 }
 
+function estimateHoursFallback(type: CourseResult['type'], title: string, snippet: string): number {
+  const text = (title + ' ' + snippet).toLowerCase()
+  const hourMatch = text.match(/(\d+)\s*hour/i)
+  if (hourMatch) return parseInt(hourMatch[1])
+  const weekMatch = text.match(/(\d+)\s*week/i)
+  if (weekMatch) return parseInt(weekMatch[1]) * 10
+  switch (type) {
+    case 'course': return 15
+    case 'video': return 4
+    case 'article': return 1
+    case 'tutorial': return 6
+    case 'documentation': return 3
+    default: return 5
+  }
+}
 function sanitizeUrl(url: string): string {
   if (!url) return ''
   url = url.trim()
@@ -95,24 +111,6 @@ function sanitizeUrl(url: string): string {
   return url
 }
 
-function estimateHours(type: CourseResult['type'], title: string, snippet: string): number {
-  const text = (title + ' ' + snippet).toLowerCase()
-  // Try to extract hours from text
-  const hourMatch = text.match(/(\d+)\s*hour/i)
-  if (hourMatch) return parseInt(hourMatch[1])
-  const weekMatch = text.match(/(\d+)\s*week/i)
-  if (weekMatch) return parseInt(weekMatch[1]) * 10
-
-  // Default by type
-  switch (type) {
-    case 'course': return 15
-    case 'video': return 4
-    case 'article': return 1
-    case 'tutorial': return 6
-    case 'documentation': return 3
-    default: return 5
-  }
-}
 
 async function searchCoursesForSkill(skillName: string, goal: string): Promise<CourseResult[]> {
   const cacheKey = `${skillName}:${goal}`.toLowerCase()
@@ -144,18 +142,32 @@ async function searchCoursesForSkill(skillName: string, goal: string): Promise<C
       seenUrls.add(url)
 
       const platform = identifyPlatform(url, result.snippet || '')
+      const title = result.name || `${skillName} Resource`
+      const snippet = result.snippet || ''
+
+      let difficulty: CourseResult['difficulty'] = 'intermediate'
+      let estimatedHours = 5
+      try {
+        const meta = await mlEstimateCourseMeta(title, snippet, url, skillName)
+        difficulty = meta.difficulty
+        estimatedHours = meta.estimatedHours
+      } catch {
+        difficulty = estimateDifficultyFallback(skillName, snippet)
+        estimatedHours = estimateHoursFallback(platform.type, title, snippet)
+      }
+
       allResults.push({
-        title: result.name || `${skillName} Resource`,
+        title,
         url,
-        description: result.snippet || `Learn ${skillName} for ${goal}`,
+        description: snippet || `Learn ${skillName} for ${goal}`,
         type: platform.type,
         platform: platform.name,
-        estimatedHours: estimateHours(platform.type, result.name || '', result.snippet || ''),
-        difficulty: estimateDifficulty(skillName, result.snippet || ''),
+        estimatedHours,
+        difficulty,
       })
     }
   } catch {
-    // Fallback: Generate curated top-tier learning resources for this skill
+    // Curated learning platforms fallback
     const platforms = [
       { name: 'freeCodeCamp', url: `https://www.freecodecamp.org/news/search/?query=${encodeURIComponent(skillName)}`, type: 'tutorial' as const, hours: 4 },
       { name: 'YouTube', url: `https://www.youtube.com/results?search_query=${encodeURIComponent(skillName + ' full course')}`, type: 'video' as const, hours: 3 },
@@ -176,7 +188,7 @@ async function searchCoursesForSkill(skillName: string, goal: string): Promise<C
     }
   }
 
-  // Sort: prioritize free platforms, then by relevance
+  // Sort: prioritize free platforms
   const priorityDomains = ['freecodecamp.org', 'khanacademy.org', 'ocw.mit.edu', 'theodinproject.com', 'kaggle.com', 'fast.ai', 'youtube.com', 'coursera.org', 'edx.org', 'realpython.com', 'developer.mozilla.org']
   allResults.sort((a, b) => {
     const aPriority = priorityDomains.findIndex(d => a.url.includes(d))

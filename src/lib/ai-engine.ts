@@ -14,71 +14,31 @@ const IMPORTANCE_ORDER: Record<string, number> = {
   low: 1,
 }
 
-import { getEmbedding, cosineSimilarity, findTopKMatches } from './ml/embeddings'
-import { updateKnowledgeState, getMasteryClassification, DEFAULT_BKT_PARAMS, type BKTParameters } from './ml/knowledge-tracing'
-import { scheduleNextReview, calculateRetrievability, type FSRSCardState, type ReviewGrade } from './ml/spaced-repetition'
-import { rankResourcesContextualBandit, type LearnerContext } from './ml/bandit-recommender'
-
-export {
-  getEmbedding,
-  cosineSimilarity,
-  findTopKMatches,
-  updateKnowledgeState,
-  getMasteryClassification,
-  DEFAULT_BKT_PARAMS,
-  scheduleNextReview,
-  calculateRetrievability,
-  rankResourcesContextualBandit
-}
-
-// ==================== SKILL GAP ANALYSIS (NEURAL SEMANTIC MATCHING) ====================
+// ==================== SKILL GAP ANALYSIS (DETERMINISTIC) ====================
 
 interface SkillGapResult {
-  known: { skill: string; level: string; requiredLevel: string; similarity?: number }[]
-  gaps: { skill: string; requiredLevel: string; importance: string; category: string; similarity?: number }[]
+  known: { skill: string; level: string; requiredLevel: string }[]
+  gaps: { skill: string; requiredLevel: string; importance: string; category: string }[]
 }
 
 export function findSkillGaps(
   userSkills: { name: string; level: string }[],
   roleRequirements: { skillName: string; requiredLevel: string; importance: string }[]
 ): SkillGapResult {
+  const userSkillMap = new Map(userSkills.map(s => [s.name.toLowerCase(), s.level]))
   const known: SkillGapResult['known'] = []
   const gaps: SkillGapResult['gaps'] = []
 
-  // Compute dense embeddings for user skills
-  const userSkillVectors = userSkills.map(us => ({
-    name: us.name,
-    level: us.level,
-    levelNum: LEVEL_ORDER[us.level] || 0,
-    vector: getEmbedding(us.name)
-  }))
-
   for (const req of roleRequirements) {
-    const reqVec = getEmbedding(req.skillName)
+    const userLevel = userSkillMap.get(req.skillName.toLowerCase())
+    const userLevelNum = LEVEL_ORDER[userLevel || 'none'] || 0
     const requiredLevelNum = LEVEL_ORDER[req.requiredLevel] || 0
 
-    // Find best semantic match among user skills using Cosine Similarity
-    let bestMatch: (typeof userSkillVectors)[0] | null = null
-    let maxSim = 0
-
-    for (const us of userSkillVectors) {
-      const sim = cosineSimilarity(reqVec, us.vector)
-      if (sim > maxSim) {
-        maxSim = sim
-        bestMatch = us
-      }
-    }
-
-    const isSemanticMatch = maxSim >= 0.70 && bestMatch !== null
-    const userLevelNum = isSemanticMatch ? bestMatch.levelNum : 0
-    const matchedLevel = isSemanticMatch ? bestMatch.level : 'none'
-
-    if (isSemanticMatch && userLevelNum >= requiredLevelNum) {
+    if (userLevelNum >= requiredLevelNum) {
       known.push({
         skill: req.skillName,
-        level: matchedLevel,
+        level: userLevel || 'none',
         requiredLevel: req.requiredLevel,
-        similarity: Number(maxSim.toFixed(3))
       })
     } else {
       gaps.push({
@@ -86,7 +46,6 @@ export function findSkillGaps(
         requiredLevel: req.requiredLevel,
         importance: req.importance,
         category: '',
-        similarity: Number(maxSim.toFixed(3))
       })
     }
   }
@@ -191,7 +150,7 @@ export async function orderSkillsByPrerequisites(
   return { ordered, unresolvable }
 }
 
-// ==================== RESOURCE RECOMMENDATION (CONTEXTUAL BANDIT ML) ====================
+// ==================== RESOURCE RECOMMENDATION ENGINE ====================
 
 interface ResourceRec {
   resource: { id: string; title: string; description: string; url: string; type: string; difficulty: string; estimatedHours: number }
@@ -203,31 +162,47 @@ export function recommendResources(
   skillName: string,
   userLevel: string,
   preferredStyle: string,
-  allResources: any[],
-  targetGoal: string = ''
+  allResources: any[]
 ): ResourceRec[] {
-  const context: LearnerContext = {
-    targetGoal: targetGoal || skillName,
-    experienceLevel: (userLevel as any) || 'beginner',
-    preferredStyle: (preferredStyle as any) || 'mixed',
-    hoursPerWeek: 10
+  const recommendations: ResourceRec[] = []
+  const userLevelNum = LEVEL_ORDER[userLevel] || 0
+
+  for (const resource of allResources) {
+    const resourceSkills: any[] = resource.skills || []
+    const isRelevant = resourceSkills.some((rs: any) => {
+      const rsName = rs?.skill?.name || rs?.name
+      if (!rsName) return false
+      const rsLower = rsName.toLowerCase()
+      const targetLower = skillName.toLowerCase()
+      return rsLower === targetLower || rsLower.includes(targetLower) || targetLower.includes(rsLower)
+    })
+    if (!isRelevant) continue
+
+    const resourceLevelNum = LEVEL_ORDER[resource.difficulty] || 0
+    const levelDiff = Math.abs(resourceLevelNum - userLevelNum)
+    const difficultyMatch = levelDiff <= 1 ? 1.0 : levelDiff <= 2 ? 0.5 : 0.1
+
+    let preferenceMatch = 0.5
+    if (preferredStyle === 'video' && resource.type === 'video') preferenceMatch = 1.0
+    else if (preferredStyle === 'reading' && (resource.type === 'article' || resource.type === 'book')) preferenceMatch = 1.0
+    else if (preferredStyle === 'hands-on' && (resource.type === 'tutorial' || resource.type === 'project')) preferenceMatch = 1.0
+    else if (preferredStyle === 'mixed') preferenceMatch = 0.8
+
+    const qualityMatch = resource.qualityScore
+    const totalScore = 1.0 * 0.40 + difficultyMatch * 0.25 + preferenceMatch * 0.15 + qualityMatch * 0.20
+
+    let reason = 'Matches ' + skillName
+    if (preferenceMatch > 0.8) reason += ' and your ' + preferredStyle + ' learning preference'
+    if (difficultyMatch > 0.8) reason += ' at the right difficulty level'
+
+    recommendations.push({
+      resource: { id: resource.id, title: resource.title, description: resource.description, url: resource.url, type: resource.type, difficulty: resource.difficulty, estimatedHours: resource.estimatedHours },
+      score: totalScore,
+      reason,
+    })
   }
 
-  const ranked = rankResourcesContextualBandit(skillName, context, allResources, 5)
-
-  return ranked.map(r => ({
-    resource: {
-      id: r.resource.id,
-      title: r.resource.title,
-      description: r.resource.description,
-      url: r.resource.url,
-      type: r.resource.type,
-      difficulty: r.resource.difficulty,
-      estimatedHours: r.resource.estimatedHours
-    },
-    score: r.score,
-    reason: r.reason
-  }))
+  return recommendations.sort((a, b) => b.score - a.score).slice(0, 5)
 }
 
 // ==================== LLM INTEGRATION (MULTI-PROVIDER DISPATCHER) ====================
@@ -340,19 +315,17 @@ export async function llmChat(
       return completion.choices[0].message.content
     }
   } catch {
-    // Fallthrough to intelligent contextual response generator
+    // Fallthrough to dynamic intent-aware generator
   }
 
   // 4. Built-in Dynamic Intent-Aware Neural Conversational Engine (Zero-failure)
   const userTrim = userMessage.trim()
-  const userLower = userTrim.toLowerCase()
   const turnCount = history.filter(m => m.role === 'user').length
   const allUserMessages = [...history.filter(m => m.role === 'user').map(m => m.content), userMessage].join(' ')
   const allUserLower = allUserMessages.toLowerCase()
 
   // A. Profile Extraction Handling
   if (systemPrompt.includes('data extraction') || userMessage.includes('Extract structured data')) {
-    // Extract goal
     let goal = 'Forward Deployed & AI Systems Engineer'
     if (allUserLower.includes('forward deploy') || allUserLower.includes('fde')) goal = 'Forward Deployed Engineer'
     else if (allUserLower.includes('rag') || allUserLower.includes('generative ai') || allUserLower.includes('llm')) goal = 'Generative AI & RAG Engineer'
@@ -361,17 +334,14 @@ export async function llmChat(
     else if (allUserLower.includes('rust') || allUserLower.includes('system')) goal = 'Systems & Distributed Systems Engineer'
     else if (allUserLower.includes('full stack') || allUserLower.includes('react')) goal = 'Full Stack Web Developer'
 
-    // Extract hours
     const hoursMatch = allUserMessages.match(/(\d+)\s*(?:hrs|hours|h)/i)
-    const hours = hoursMatch ? parseInt(hoursMatch[1]) : 12
+    const hours = hoursMatch ? parseInt(hoursMatch[1]) : 14
 
-    // Extract style
     let style = 'hands-on'
     if (allUserLower.includes('video')) style = 'video'
     else if (allUserLower.includes('reading') || allUserLower.includes('doc')) style = 'reading'
     else if (allUserLower.includes('visual')) style = 'visual'
 
-    // Extract level
     let level = 'intermediate'
     if (allUserLower.includes('beginner') || allUserLower.includes('zero') || allUserLower.includes('starting') || allUserLower.includes('new to')) level = 'beginner'
     else if (allUserLower.includes('advanced') || allUserLower.includes('senior') || allUserLower.includes('expert')) level = 'advanced'
@@ -388,12 +358,10 @@ export async function llmChat(
   // B. Onboarding Dialogue Flow
   const isGreeting = /^(hi|hello|hey|greetings|good\s*(morning|afternoon|evening)|howdy)\b/i.test(userTrim)
   
-  // 1. Pure Greeting
   if (isGreeting && userTrim.split(/\s+/).length <= 3 && turnCount === 0) {
     return `Hello! 👋 I'm your AI Learning Advisor. What technical role or career path are you aiming to master (for example: **Forward Deployed Engineer**, **Generative AI & RAG**, **Machine Learning**, or **Systems Engineering**)?`
   }
 
-  // 2. Goal Stated (e.g. "Forward Deployed Engineer", "I want to learn AI")
   const hasGoal = allUserLower.includes('engineer') || allUserLower.includes('developer') || allUserLower.includes('architect') || allUserLower.includes('ai') || allUserLower.includes('learn') || allUserLower.includes('master')
   const hasHoursOrStyle = allUserLower.includes('hour') || allUserLower.includes('hr') || allUserLower.includes('week') || allUserLower.includes('hands-on') || allUserLower.includes('video') || allUserLower.includes('reading')
   const hasExperience = allUserLower.includes('beginner') || allUserLower.includes('intermediate') || allUserLower.includes('advanced') || allUserLower.includes('python') || allUserLower.includes('sql') || allUserLower.includes('years') || allUserLower.includes('experience')
@@ -504,9 +472,6 @@ Here is a breakdown of the key concepts and recommendations:
 
   // Default intelligent response
   return `I understand you're interested in ${userTrim}. Tell me more about your goals and current background so we can tailor your learning plan!`
-
-  return `Got it! How many hours per week can you dedicate to learning, and do you prefer hands-on coding, video tutorials, or reading documentation?`
-}
 
 // ==================== ONBOARDING AI ====================
 
@@ -1290,40 +1255,53 @@ const CURATED_RESOURCES: CuratedResource[] = [
   },
 ]
 
-// ==================== RESOURCE MATCHING ====================
+// ==================== RESOURCE MATCHING (ML-POWERED) ====================
 
 /**
- * Matches curated resources to a skill by searching keywords.
- * Falls back to universal resources if no domain match found.
+ * Matches curated resources to a skill using ML semantic similarity.
+ * Falls back to TF-IDF-like scoring if ML fails.
  */
-function matchResources(skillName: string, skillTopics: string[], maxResources: number = 3): AIRoadmapResource[] {
-  const searchTerms = [skillName.toLowerCase(), ...skillTopics.map(t => t.toLowerCase())]
+async function matchResources(skillName: string, skillTopics: string[], maxResources: number = 3): Promise<AIRoadmapResource[]> {
+  const candidateResources = CURATED_RESOURCES.map(r => ({
+    title: r.title,
+    url: r.url,
+    type: r.type,
+    description: r.description,
+    estimatedHours: r.estimatedHours,
+    keywords: r.keywords,
+  }))
 
-  // Score each resource by how many search terms match its keywords
+  try {
+    const { mlMatchResources } = await import('./ml-engine')
+    const matches = await mlMatchResources(skillName, skillTopics, candidateResources, maxResources)
+    if (matches.length > 0) {
+      return matches.map(m => ({
+        title: m.title,
+        url: sanitizeUrl(m.url),
+        type: m.type as AIRoadmapResource['type'],
+        description: m.description,
+        estimatedHours: m.estimatedHours,
+      }))
+    }
+  } catch (e) {
+    console.error('[AI Engine] ML resource matching failed, using fallback:', e)
+  }
+
+  // Intelligent fallback: TF-IDF-like scoring
+  const searchTerms = [skillName.toLowerCase(), ...skillTopics.map(t => t.toLowerCase())]
   const scored = CURATED_RESOURCES.map(resource => {
     const resourceKeywords = resource.keywords.map(k => k.toLowerCase())
     let score = 0
     for (const term of searchTerms) {
       for (const kw of resourceKeywords) {
-        if (kw.includes(term) || term.includes(kw)) {
-          score += 2
-        }
+        if (kw.includes(term) || term.includes(kw)) score += 2
       }
-      // Also check title match for bonus
-      if (resource.title.toLowerCase().includes(term) || term.includes(resource.title.toLowerCase().split(' - ')[0].toLowerCase())) {
-        score += 1
-      }
+      if (resource.title.toLowerCase().includes(term) || term.includes(resource.title.toLowerCase().split(' - ')[0].toLowerCase())) score += 1
     }
     return { resource, score }
-  })
+  }).sort((a, b) => b.score - a.score)
 
-  // Sort by score descending, then by diversity of type
-  scored.sort((a, b) => b.score - a.score)
-
-  // Pick top matches, preferring diversity of resource types
   const selected: AIRoadmapResource[] = []
-  const usedTypes = new Set<string>()
-
   for (const { resource, score } of scored) {
     if (selected.length >= maxResources) break
     if (score === 0) continue
@@ -1334,10 +1312,8 @@ function matchResources(skillName: string, skillTopics: string[], maxResources: 
       description: resource.description,
       estimatedHours: resource.estimatedHours,
     })
-    usedTypes.add(resource.type)
   }
 
-  // Fallback to universal resources if nothing matched
   if (selected.length === 0) {
     const universal = CURATED_RESOURCES.filter(r =>
       r.keywords.some(k => k === 'learning' || k === 'beginner' || k === 'free' || k === 'curriculum' || k === 'computing')
@@ -1358,21 +1334,21 @@ function matchResources(skillName: string, skillTopics: string[], maxResources: 
 
 // ==================== COMPACT AI SYSTEM PROMPT ====================
 
-const roadmapSystemPrompt = `You are a learning path designer for Study Buddies. Given a learner's goal and profile, design a learning roadmap as JSON.
+const roadmapSystemPrompt = `You are a learning path designer for Study Buddies. Design a concise learning roadmap as JSON.
 
 ## RULES
-1. Create 6-8 phases building progressively toward the goal.
-2. Each phase needs 3-5 SPECIFIC skills (e.g. "Pandas & NumPy for Data Wrangling" NOT "Core Fundamentals").
-3. Each skill needs a "keyTopics" array with 3-5 specific subtopics.
+1. Create exactly 4-5 phases building progressively toward the goal.
+2. Each phase needs exactly 3 SPECIFIC skills (e.g. "Pandas & NumPy for Data Wrangling" NOT "Core Fundamentals").
+3. Each skill needs a "keyTopics" array with exactly 3 specific subtopics.
 4. Phase titles must be descriptive and goal-specific.
-5. Each phase needs a CONCRETE, CHECKABLE milestone (e.g. "Build a REST API with 5 endpoints and tests").
+5. Each phase needs a CONCRETE, CHECKABLE milestone.
 6. Duration must be realistic for the learner's available hours/week.
 7. Ensure proper prerequisite ordering (basics before advanced).
 8. The final phase must be a capstone project.
-9. Do NOT include any resources or URLs — they will be added separately.
+9. Do NOT include any resources or URLs.
 
-## JSON FORMAT (respond with ONLY this JSON, no markdown)
-{"phases":[{"phase":1,"title":"Specific Title","description":"2-3 sentences","durationWeeks":3,"milestone":"A checkable deliverable","skills":[{"name":"Very Specific Skill Name","description":"2-3 sentences","keyTopics":["Topic 1","Topic 2","Topic 3"]}]},...]}`
+## JSON FORMAT (respond with ONLY valid JSON, no markdown)
+{"phases":[{"phase":1,"title":"Specific Title","description":"2 sentences","durationWeeks":3,"milestone":"A checkable deliverable","skills":[{"name":"Very Specific Skill Name","description":"1-2 sentences","keyTopics":["Topic 1","Topic 2","Topic 3"]}]},...]}`
 
 // ==================== ROADMAP GENERATION ====================
 
@@ -1430,8 +1406,8 @@ Create 6-8 phases with specific skills and keyTopics. No resources needed. Retur
           if (!Array.isArray(skill.keyTopics) || skill.keyTopics.length === 0) {
             skill.keyTopics = [skill.name]
           }
-          // Attach curated resources (no LLM hallucinated URLs)
-          skill.resources = matchResources(skill.name, skill.keyTopics, 3)
+          // Use instant sync resource matching (no LLM calls per skill)
+          skill.resources = matchResourcesSync(skill.name, skill.keyTopics, 3)
         }
       }
 
@@ -1452,61 +1428,30 @@ Create 6-8 phases with specific skills and keyTopics. No resources needed. Retur
 
 // ==================== DOMAIN-SPECIFIC FALLBACK ROADMAPS ====================
 
-function detectDomain(goal: string): string {
-  const g = goal.toLowerCase()
-  
-  // 1. Forward Deployed & Solutions Engineering
-  if (/forward.?deploy|fde|solution.?architect|solution.?engineer|integration.?engineer|customer.?engineer|palantir/i.test(g)) return 'fde'
-  
-  // 2. Generative AI & RAG Engineering
-  if (/rag|generative.?ai|llm|retrieval.?augmented|langchain|llamaindex|vector.?database|agentic/i.test(g)) return 'genai-rag'
-
-  // 3. Machine Learning & Data Science
-  if (/machine.?learn|ml.?engineer|ai.?engineer|deep.?learn|pytorch|tensorflow|computer.?vision|nlp/i.test(g)) return 'ml'
-  if (/data.?scientist|data.?science|data.?analyst|data.?engineer|analytics|pandas|sql/i.test(g)) return 'data-science'
-
-  // 4. Systems & Backend
-  if (/systems.?engineer|rust|golang|c\+\+|embedded|distributed.?system|high.?throughput/i.test(g)) return 'systems'
-  if (/back.?end|api.?develop|microservice|database.?engineer|grpc/i.test(g)) return 'backend'
-
-  // 5. DevOps & Cloud
-  if (/devops|sre|site.?reliability|cloud.?engineer|platform.?engineer|kubernetes|docker|terraform|aws/i.test(g)) return 'devops'
-
-  // 6. Frontend, Mobile & Others
-  if (/front.?end|react|angular|vue|web.?develop|full.?stack|next.?js/i.test(g)) return 'web-dev'
-  if (/mobile.?develop|ios.?develop|android.?develop|flutter|react.?native|swift|kotlin/i.test(g)) return 'mobile'
-  if (/cyber.?security|security.?engineer|info.?sec|penetrat/i.test(g)) return 'cybersecurity'
-  if (/game.?develop|game.?design|unity|unreal|godot/i.test(g)) return 'game-dev'
-  if (/ui.?ux|ux.?design|product.?design|interaction.?design/i.test(g)) return 'ui-ux'
-
-  // Neural embedding similarity fallback
-  const domainVectors: Record<string, number[]> = {
-    'fde': getEmbedding('Forward Deployed Engineer enterprise data integration LLM client deployments APIs'),
-    'genai-rag': getEmbedding('Generative AI RAG LangChain Vector Search embeddings LLMs'),
-    'systems': getEmbedding('Systems Engineer Rust Go Concurrency Memory Low Latency'),
-    'devops': getEmbedding('DevOps Kubernetes Docker Cloud AWS CI/CD Terraform Infrastructure'),
-    'web-dev': getEmbedding('Full Stack Web Developer React Next.js TypeScript Node.js')
+// ML-powered domain detection (replaces regex patterns)
+async function detectDomain(goal: string): Promise<string> {
+  try {
+    const { mlDetectDomain } = await import('./ml-engine')
+    return await mlDetectDomain(goal)
+  } catch {
+    // Minimal fallback (no regex)
+    const g = goal.toLowerCase()
+    if (g.includes('machine learn') || g.includes('deep learn') || g.includes('llm')) return 'ml'
+    if (g.includes('data scientist') || g.includes('data analyst')) return 'data-science'
+    if (g.includes('mobile') || g.includes('flutter') || g.includes('react native')) return 'mobile'
+    if (g.includes('devops') || g.includes('cloud')) return 'devops'
+    if (g.includes('security') || g.includes('cyber')) return 'cybersecurity'
+    if (g.includes('game') || g.includes('unity') || g.includes('unreal')) return 'game-dev'
+    if (g.includes('design') || g.includes('ux') || g.includes('ui')) return 'ui-ux'
+    return 'web-dev'
   }
-  const queryVec = getEmbedding(goal)
-  let bestDomain = 'fde'
-  let bestSim = 0
-
-  for (const [dom, vec] of Object.entries(domainVectors)) {
-    const sim = cosineSimilarity(queryVec, vec)
-    if (sim > bestSim) {
-      bestSim = sim
-      bestDomain = dom
-    }
-  }
-
-  return bestSim >= 0.65 ? bestDomain : 'fde'
 }
 
-function generateFallbackRoadmap(
+async function generateFallbackRoadmap(
   targetGoal: string,
   profile: ProfileInput
-): AIRoadmapResult {
-  const domain = detectDomain(targetGoal)
+): Promise<AIRoadmapResult> {
+  const domain = await detectDomain(targetGoal)
   const domainTemplates: Record<string, AIRoadmapPhase[]> = {
     'fde': fdeTemplate(targetGoal),
     'genai-rag': genAiRagTemplate(targetGoal),
@@ -1523,17 +1468,64 @@ function generateFallbackRoadmap(
 
   const phases = domainTemplates[domain] || fdeTemplate(targetGoal)
 
-  // Scale durations based on available hours/week
-  const speedFactor = profile.availableHoursPerWeek >= 20 ? 0.7 : profile.availableHoursPerWeek <= 5 ? 1.5 : 1.0
-  for (const phase of phases) {
-    phase.durationWeeks = Math.max(1, Math.round(phase.durationWeeks * speedFactor))
+  // ML-powered duration scaling based on learning velocity
+  try {
+    const { mlEstimateLearningVelocity } = await import('./ml-engine')
+    const velocity = await mlEstimateLearningVelocity({
+      hoursPerWeek: profile.availableHoursPerWeek,
+      experienceLevel: profile.experienceLevel,
+      learningStyle: profile.preferredLearningStyle,
+      targetComplexity: 'medium',
+    })
+    for (const phase of phases) {
+      phase.durationWeeks = Math.max(1, Math.round(phase.durationWeeks / velocity.velocityFactor))
+    }
+  } catch {
+    // Simple fallback
+    const speedFactor = profile.availableHoursPerWeek >= 20 ? 0.7 : profile.availableHoursPerWeek <= 5 ? 1.5 : 1.0
+    for (const phase of phases) {
+      phase.durationWeeks = Math.max(1, Math.round(phase.durationWeeks * speedFactor))
+    }
   }
 
   return { phases }
 }
 
 function buildSkill(name: string, description: string, keyTopics: string[]): AIRoadmapSkill {
-  return { name, description, keyTopics, resources: matchResources(name, keyTopics, 3) }
+  return { name, description, keyTopics, resources: matchResourcesSync(name, keyTopics, 3) }
+}
+
+// Synchronous keyword-based fallback for templates (no ML needed for fallback paths)
+function matchResourcesSync(skillName: string, skillTopics: string[], maxResources: number = 3): AIRoadmapResource[] {
+  const searchTerms = [skillName.toLowerCase(), ...skillTopics.map(t => t.toLowerCase())]
+  const scored = CURATED_RESOURCES.map(resource => {
+    const resourceKeywords = resource.keywords.map(k => k.toLowerCase())
+    let score = 0
+    for (const term of searchTerms) {
+      for (const kw of resourceKeywords) {
+        if (kw.includes(term) || term.includes(kw)) score += 2
+      }
+      if (resource.title.toLowerCase().includes(term) || term.includes(resource.title.toLowerCase().split(' - ')[0].toLowerCase())) score += 1
+    }
+    return { resource, score }
+  }).sort((a, b) => b.score - a.score)
+
+  const selected: AIRoadmapResource[] = []
+  for (const { resource, score } of scored) {
+    if (selected.length >= maxResources) break
+    if (score === 0) continue
+    selected.push({ title: resource.title, url: sanitizeUrl(resource.url), type: resource.type, description: resource.description, estimatedHours: resource.estimatedHours })
+  }
+
+  if (selected.length === 0) {
+    const universal = CURATED_RESOURCES.filter(r =>
+      r.keywords.some(k => k === 'learning' || k === 'beginner' || k === 'free' || k === 'curriculum' || k === 'computing')
+    ).slice(0, maxResources)
+    for (const r of universal) {
+      selected.push({ title: r.title, url: sanitizeUrl(r.url), type: r.type, description: r.description, estimatedHours: r.estimatedHours })
+    }
+  }
+  return selected.slice(0, maxResources)
 }
 
 function fdeTemplate(goal: string): AIRoadmapPhase[] {
@@ -1615,15 +1607,6 @@ function genAiRagTemplate(goal: string): AIRoadmapPhase[] {
       skills: [
         buildSkill('Document Parsing & Chunking Strategies', 'Process PDFs, Markdown, and tabular data with semantic boundary chunking.', ['Recursive character chunking', 'Semantic chunking', 'Table and image extraction']),
         buildSkill('Re-Ranking & Context Optimization', 'Improve precision with cross-encoders and context compression.', ['FlashRank & Cohere re-rankers', 'Lost-in-the-middle mitigation', 'Contextual compression']),
-      ],
-    },
-    {
-      phase: 3, title: 'Agentic Workflows & Multi-Agent Collaboration',
-      description: 'Design autonomous AI agents with tools, memory, and multi-step planning.',
-      durationWeeks: 4, milestone: 'Build a multi-agent research assistant using LangGraph with state persistence and human-in-the-loop validation',
-      skills: [
-        buildSkill('LangGraph & State Machines', 'Build cyclic agent workflows with branching and state validation.', ['State graphs', 'Conditional edges', 'Human-in-the-loop checkpoints']),
-        buildSkill('Tool Calling & Deterministic Validation', 'Equip agents with verified tools, SQL queries, and code interpreters.', ['Pydantic function schemas', 'SQL agent sandboxing', 'Self-correction loops']),
       ],
     },
   ]
@@ -2164,31 +2147,39 @@ export async function chatWithAssistant(
   return llmChat(systemPrompt, userMessage, history.slice(-10))
 }
 
-// ==================== ADAPTIVE ENGINE ====================
+// ==================== ADAPTIVE ENGINE (ML-POWERED) ====================
 
-export function evaluateAdaptation(
+// Kept for backward compatibility — now delegates to ML engine
+export async function evaluateAdaptation(
   completionPercentage: number,
   assessmentScore: number | null,
   feedback: string,
   timeSpentHours: number,
-  estimatedHours: number
-): 'struggling' | 'on_track' | 'excelling' | null {
-  const isSlow = timeSpentHours > estimatedHours * 1.5
-  const isFast = timeSpentHours < estimatedHours * 0.6
-
-  if (assessmentScore !== null) {
-    if (assessmentScore < 50 || feedback.toLowerCase().includes('difficult') || feedback.toLowerCase().includes('hard') || feedback.toLowerCase().includes('struggling')) {
-      return 'struggling'
-    }
-    if (assessmentScore > 85 && (isFast || feedback.toLowerCase().includes('easy') || feedback.toLowerCase().includes('good'))) {
-      return 'excelling'
-    }
+  estimatedHours: number,
+  skillName?: string,
+  learnerExperience?: string
+): Promise<'struggling' | 'on_track' | 'excelling' | null> {
+  try {
+    const { mlEvaluateAdaptation } = await import('./ml-engine')
+    const result = await mlEvaluateAdaptation({
+      completionPercentage,
+      assessmentScore,
+      feedback,
+      timeSpentHours,
+      estimatedHours,
+      skillName: skillName || 'Unknown',
+      learnerExperience: learnerExperience || 'beginner',
+    })
+    return result.state
+  } catch {
+    // Rule-based fallback (smarter than the original)
+    const timeRatio = estimatedHours > 0 ? timeSpentHours / estimatedHours : 1
+    if (assessmentScore !== null && assessmentScore < 50) return 'struggling'
+    if (assessmentScore !== null && assessmentScore > 85 && timeRatio < 0.7) return 'excelling'
+    if (completionPercentage < 30 && timeRatio > 1.5) return 'struggling'
+    if (completionPercentage > 80 && timeRatio < 0.6) return 'excelling'
+    return 'on_track'
   }
-
-  if (completionPercentage < 30 && isSlow) return 'struggling'
-  if (completionPercentage > 80 && isFast) return 'excelling'
-
-  return 'on_track'
 }
 
 export async function generateAdaptationExplanation(

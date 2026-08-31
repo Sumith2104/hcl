@@ -138,11 +138,15 @@ export function OnboardingView() {
     setGeneratingRoadmap(true)
     setGenStep(1)
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 120_000) // 2 min timeout
       const res = await fetch('/api/roadmap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user!.id, profile: profileData }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
       setGenStep(2)
       const data = await res.json()
       if (data.error) {
@@ -154,8 +158,12 @@ export function OnboardingView() {
       setGenStep(3)
       toast.success(`Roadmap ready! ${data.phasesCount} phases, ${data.skillsCount} skills, ${data.resourcesCount} resources`)
       setTimeout(() => setView('dashboard'), 800)
-    } catch {
-      toast.error('Failed to generate roadmap')
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        toast.error('Roadmap generation timed out. Please try again.')
+      } else {
+        toast.error('Failed to generate roadmap. Please try again.')
+      }
       setGeneratingRoadmap(false)
       setView('dashboard')
     }

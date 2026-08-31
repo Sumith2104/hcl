@@ -52,10 +52,3 @@ prompt
 server.log
 # Skills directory
 /skills/
-*.tar
-*.zip
-scratch/
-tool-results/
-upload/*.png
-upload/*.jpg
-upload/*.pdf

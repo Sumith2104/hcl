@@ -54,9 +54,10 @@ function AppContent() {
 
     const restored = restoreSession()
     if (restored) {
+      // Show the app immediately, check profile in background
+      setSessionRestored(true)
       const storedUser = JSON.parse(localStorage.getItem('sb_user') || '{}')
-      // Check if user has a profile to decide which view to show
-      fetch(`/api/profile?userId=${storedUser.id}`)
+      fetch(`/api/profile?userId=${storedUser.id}`, { signal: AbortSignal.timeout(6000) })
         .then(r => r.json())
         .then(data => {
           if (data.profile) {
@@ -64,11 +65,9 @@ function AppContent() {
           } else {
             setView('onboarding')
           }
-          setSessionRestored(true)
         })
         .catch(() => {
           setView('onboarding')
-          setSessionRestored(true)
         })
     } else {
       setSessionRestored(true)

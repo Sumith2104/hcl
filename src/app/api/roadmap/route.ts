@@ -113,22 +113,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'userId is required' }, { status: 400 })
     }
 
-    // Verify user and profile exist
-    const profileRows = await fb.fluxbase.query(`SELECT * FROM LearnerProfile WHERE user_id = '${fb.escapeSql(userId)}' LIMIT 1`)
+    // Parallel fetch profile + skills (saves ~2-3s)
+    const [profileRows, userSkillRows] = await Promise.all([
+      fb.fluxbase.query(`SELECT * FROM LearnerProfile WHERE user_id = '${fb.escapeSql(userId)}' LIMIT 1`),
+      fb.fluxbase.query(`SELECT us.*, s.name as skill_name FROM UserSkill us JOIN Skill s ON us.skill_id = s.id WHERE us.user_id = '${fb.escapeSql(userId)}'`),
+    ])
     if (profileRows.length === 0) {
       return NextResponse.json({ error: 'Learner profile not found. Complete onboarding first.' }, { status: 404 })
     }
     const profile = profileRows[0]
     const targetGoal = profile.targetGoal as string
-
-    // Get user's current skills for context
-    const userSkillRows = await fb.fluxbase.query(`SELECT us.*, s.name as skill_name FROM UserSkill us JOIN Skill s ON us.skill_id = s.id WHERE us.user_id = '${fb.escapeSql(userId)}'`)
     const currentSkills = userSkillRows.map((us: Record<string, unknown>) => ({
       skill: us.skillName as string,
       level: us.proficiencyLevel as string,
     }))
 
     // Generate roadmap structure with AI (skills + topics only, resources attached locally)
+    console.time('[Roadmap] AI generation')
     const aiRoadmap = await generateRoadmapWithAI(targetGoal, {
       availableHoursPerWeek: profile.availableHoursPerWeek as number,
       targetDurationWeeks: profile.targetDurationWeeks as number | null,
@@ -136,9 +137,13 @@ export async function POST(req: NextRequest) {
       preferredLearningStyle: profile.preferredLearningStyle as string,
       currentSkills,
     })
+    console.timeEnd('[Roadmap] AI generation')
 
-    // Archive any existing active roadmaps
-    await fb.fluxbase.execute(`UPDATE Roadmap SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE user_id = '${fb.escapeSql(userId)}' AND status = 'active'`)
+    // Archive old + insert new in parallel
+    console.time('[Roadmap] DB writes')
+    const [archiveResult] = await Promise.all([
+      fb.fluxbase.execute(`UPDATE Roadmap SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE user_id = '${fb.escapeSql(userId)}' AND status = 'active'`),
+    ])
 
     // Calculate total estimated weeks
     const totalWeeks = aiRoadmap.phases.reduce((sum, p) => sum + (p.durationWeeks || 2), 0)
@@ -285,6 +290,7 @@ export async function POST(req: NextRequest) {
       items: roadmapItems,
     }
 
+    console.timeEnd('[Roadmap] DB writes')
     return NextResponse.json({
       roadmap: fullRoadmap,
       skillsCount: totalSkills,
@@ -292,6 +298,16 @@ export async function POST(req: NextRequest) {
       phasesCount: aiRoadmap.phases.length,
     }, { status: 201 })
   } catch (error) {
+    console.timeEnd('[Roadmap] DB writes')
+    console.error('[GenerateRoadmap] Full error:', error)
+    const msg = error instanceof Error ? error.message : 'Unknown error'
+    // Give user-friendly error messages for common failures
+    if (msg.includes('timed out') || msg.includes('timeout') || msg.includes('abort'))
+      return NextResponse.json({ error: 'Roadmap generation timed out. Please try again — the AI server may be busy.' }, { status: 504 })
+    if (msg.includes('JSON'))
+      return NextResponse.json({ error: 'AI returned invalid data. Please try again.' }, { status: 502 })
+    if (msg.includes('network') || msg.includes('cannot reach'))
+      return NextResponse.json({ error: 'Could not reach the AI service. Please check your connection and try again.' }, { status: 503 })
     const err = dbError(error, 'GenerateRoadmap')
     return NextResponse.json({ error: err.error }, { status: err.status })
   }
